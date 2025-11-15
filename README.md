@@ -1,127 +1,70 @@
-# Warehouse Management System (WMS)
+# ERP Logistique, Finance & RH/Paie
 
-This repository contains a minimal but functional Warehouse Management System built with Node.js, Express, and PostgreSQL. The project is fully containerised with Docker and Docker Compose and covers inbound, outbound, stock management, inventory, audit logging, and reporting flows required for a WMS MVP.
+This repository now exposes a compact but functional ERP that unifies the previously isolated WMS module with brand new Finance and HR/Payroll capabilities. The goal is to provide an end-to-end demo stack that can be launched with Docker and exercised through a modern web UI.
 
-## Features
+## Highlights
 
-- RESTful API built with Express
-- PostgreSQL schema covering users, warehouses, locations, items, stock, inbound/outbound orders, movements, inventory counts, and audit logs
-- Secure authentication with scrypt hashed passwords and role-based access (Admin, Operator, Viewer)
-- Responsive web interface served by Express covering dashboard, catalogue, inbound/outbound, stock, inventory and reports
-- Reporting endpoints for stock levels and open activities
-- Complete Docker setup for reproducible environments
+- **Single Node.js + Express backend** serving both the REST API and the SPA assets.
+- **PostgreSQL** database seeded with the full core + WMS + Finance + HR/Payroll schema.
+- **JWT-secured authentication** with role-based permissions and dynamic module visibility.
+- **Modular frontend** that activates the Dashboard, WMS, Finance, HR/Payroll and Reporting areas depending on the user role.
+- **Docker Compose** stack (`web` + `db`) that becomes usable immediately after `docker compose up --build`.
 
-## Web interface
+## Functional scope
 
-The single-page experience loaded from `/` consumes the REST API and provides the following operator journeys:
+| Module | Key features available in the MVP |
+| --- | --- |
+| **Core / Administration** | Authentication, role/permission matrix, user creation and audit log extraction. |
+| **WMS (Logistique)** | Catalogue, inbound/outbound flows, stock, movements, inventories, task engine, smart rules and reporting (feature-complete from the previous iteration). |
+| **Finance / Accounting** | Chart of accounts, journals, fiscal years, manual entries with posting, customers/suppliers, invoices with automatic accounting entries, KPIs. |
+| **HR / Personnel** | Employee files, contracts, leave types & requests (with validation), employee ↔ user linkage. |
+| **Payroll** | Payroll items, payroll runs, payslip generation with detailed lines and campaign tracking. |
+| **Reporting** | Cross-module KPIs: WMS alerts, overdue invoices, cash metrics, workforce KPIs, payroll campaigns, CSV/PDF-ready tables. |
 
-- **Authentication** – login form storing the JWT token client-side with automatic logout on expiry and manual sign-out.
-- **Dashboard** – KPIs for active items, open inbound/outbound orders, aggregated stock and quick navigation links.
-- **Catalogue** – search, create, edit and deactivate items with role-based access controls.
-- **Warehouses & Locations** – list warehouses, create new ones (Admin), browse and add locations per warehouse.
-- **Inbound (Réceptions)** – create purchase orders, review lines and book receipts to locations updating stock and movements.
-- **Outbound (Préparations)** – create customer orders, perform picking with stock validation and movement logging.
-- **Stock & Movements** – filterable stock view and recent movement history.
-- **Inventaires** – launch inventory campaigns, capture counted lines, and close campaigns (Admin only).
-- **Rapports** – consolidated views of stock by item and open inbound/outbound documents.
+## Running the stack
 
-## Getting started
-
-### Prerequisites
-
-- Docker and Docker Compose installed on your machine
-
-### Run the stack
+Requirements: Docker & Docker Compose.
 
 ```bash
 docker compose up --build
 ```
 
-- Once the containers are up:
+Once the two containers are ready:
 
-- Access the web application at http://localhost:8080 (login required)
-- Health check endpoint: http://localhost:8080/health
-- Default credentials: `admin` / `admin123`
+- Web application: http://localhost:8080
+- API health check: http://localhost:8080/health
+- Default super admin: `admin` / `admin123`
 
-### Stopping the stack
+The PostgreSQL container loads `db/init.sql` on the first boot to create the full schema (core + WMS + Finance + HR/Payroll) and to seed reference data such as roles, permissions, warehouses, finance journals, payroll items, leave types, etc.
 
-```bash
-docker compose down
-```
+## Default roles and modules
 
-To reset the PostgreSQL volume, add the `-v` flag to remove the named volume:
+| Role | Access |
+| --- | --- |
+| `ADMIN_SYSTEME` | Full control over every module and configuration. |
+| `RESP_LOGISTIQUE` | WMS cockpit, automations, reporting. |
+| `OPERATEUR_ENTREPOT` | Restricted WMS execution (receiving, picking, moves). |
+| `COMPTABLE` | Finance module (journals, entries, invoicing) + reporting. |
+| `RESP_FINANCIER` | Finance including configuration and budgets + reporting. |
+| `ADMIN_RH` | HR master data, contracts, leave validation and payroll campaigns. |
+| `TECHNICIEN_PAIE` | Payroll runs and payslip production. |
+| `VIEWER_GLOBAL` | Read-only dashboard and multi-module reporting. |
 
-```bash
-docker compose down -v
-```
+Each role is mapped to a set of permissions and module toggles. The sidebar and the dashboard adapt automatically based on these permissions.
 
-## API Overview
+## Minimal flows delivered
 
-All protected routes require an `Authorization: Bearer <token>` header. Obtain a token via the login endpoint.
+- **WMS**: create an article, receive stock, process picking, review inventories and reporting within the unified shell.
+- **Finance**: create accounts & journals, record a manual entry and post it, register a customer invoice and let the ERP generate its accounting entry automatically.
+- **HR / Paie**: create an employee and a contract, record a leave request and validate it, create a payroll run and issue a minimal payslip.
 
-### Authentication
+## Local development
 
-- `POST /auth/login` – returns a JWT token when provided with valid credentials.
-
-### Users
-
-- `GET /users` – list users (Admin only)
-- `POST /users` – create a new user (Admin only)
-
-### Items
-
-- `GET /items` – list items (supports `?search=`)
-- `POST /items` – create an item (Admin & Operator)
-- `PUT /items/:id` – update an item (Admin & Operator)
-- `POST /items/:id/deactivate` – deactivate an item (Admin)
-
-### Warehouses & Locations
-
-- `GET /warehouses` – list warehouses
-- `POST /warehouses` – create a warehouse (Admin)
-- `GET /warehouses/:warehouseId/locations` – list locations for a warehouse
-- `POST /locations` – create a location (Admin)
-
-### Inbound Orders
-
-- `POST /inbound-orders` – create an inbound order with lines (Admin & Operator)
-- `GET /inbound-orders` – list inbound orders with lines
-- `POST /inbound-orders/:id/receive` – record receipts, update stock, and log movements
-
-### Stock & Movements
-
-- `GET /stock` – list stock levels (filters: `item_id`, `warehouse_id`, `location_id`)
-- `POST /movements` – create an internal movement (Admin & Operator)
-- `GET /movements` – view recent movement history
-
-### Outbound Orders
-
-- `POST /outbound-orders` – create an outbound order with lines (Admin & Operator)
-- `GET /outbound-orders` – list outbound orders with lines
-- `POST /outbound-orders/:id/pick` – record picking, decrement stock, and log movements
-
-### Inventory
-
-- `GET /inventory-counts` – list inventory campaigns with recorded lines
-- `POST /inventory-counts` – start an inventory campaign (Admin & Operator)
-- `POST /inventory-counts/:id/lines` – record counted quantities (Admin & Operator)
-- `POST /inventory-counts/:id/close` – close an inventory (Admin)
-
-### Reporting
-
-- `GET /reports/stock-by-item`
-- `GET /reports/pending-inbounds`
-- `GET /reports/open-outbounds`
-
-## Development
-
-To run locally without Docker you will need a PostgreSQL database and to set environment variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`). Then install dependencies and start the server:
+To run outside Docker you will need a PostgreSQL instance plus environment variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`). Then:
 
 ```bash
 npm install
 npm start
 ```
 
-## License
-
-This project is provided as-is for demonstration purposes.
+The web SPA is served from `/public` and consumes the Express REST API. No additional build tooling is required for this MVP.

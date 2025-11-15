@@ -2,15 +2,18 @@ const appRoot = document.getElementById("app");
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "🏠" },
-  { id: "inbound", label: "Flux entrants", icon: "📥" },
-  { id: "outbound", label: "Flux sortants", icon: "📦" },
-  { id: "stock", label: "Stock", icon: "📊" },
-  { id: "locations", label: "Emplacements", icon: "📍" },
-  { id: "movements", label: "Mouvements internes", icon: "🔁" },
-  { id: "inventory", label: "Inventaires", icon: "✅" },
-  { id: "reporting", label: "Reporting", icon: "📈" },
-  { id: "admin", label: "Administration", icon: "⚙️" },
-  { id: "operator", label: "Mode opérateur", icon: "🤖" }
+  { id: "inbound", label: "Flux entrants", icon: "📥", permissions: ["WMS_ACCESS"] },
+  { id: "outbound", label: "Flux sortants", icon: "📦", permissions: ["WMS_ACCESS"] },
+  { id: "stock", label: "Stock", icon: "📊", permissions: ["WMS_ACCESS"] },
+  { id: "locations", label: "Emplacements", icon: "📍", permissions: ["WMS_ACCESS"] },
+  { id: "movements", label: "Mouvements internes", icon: "🔁", permissions: ["WMS_ACCESS"] },
+  { id: "inventory", label: "Inventaires", icon: "✅", permissions: ["WMS_ACCESS"] },
+  { id: "finance", label: "Finance / Comptabilité", icon: "💶", permissions: ["FINANCE_ACCESS"] },
+  { id: "hr", label: "RH & Personnel", icon: "👥", permissions: ["HR_ACCESS"] },
+  { id: "payroll", label: "Paie", icon: "💼", permissions: ["PAYROLL_ACCESS"] },
+  { id: "reporting", label: "Reporting transverse", icon: "📈", permissions: ["REPORTING_ACCESS"] },
+  { id: "admin", label: "Administration", icon: "⚙️", permissions: ["CAN_MANAGE_USERS", "CAN_MANAGE_RULES", "CORE_SETTINGS"] },
+  { id: "operator", label: "Mode opérateur", icon: "🤖", permissions: ["CAN_EXECUTE_TASKS"] }
 ];
 
 const state = {
@@ -163,8 +166,8 @@ function renderLogin() {
   }
   appRoot.innerHTML = `
     <div class="login-wrapper">
-      <h1>WMS</h1>
-      <p>Connectez-vous pour accéder au système de gestion d'entrepôt.</p>
+      <h1>ERP</h1>
+      <p>Connectez-vous pour piloter la logistique, la finance et le capital humain.</p>
       <form id="login-form">
         <div class="form-group">
           <label for="username">Identifiant</label>
@@ -212,18 +215,22 @@ function renderLogin() {
 
 function buildShell() {
   shellBuilt = true;
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => !item.permissions || item.permissions.some((permission) => hasPermission(permission))
+  );
+  const canUseOperator = hasPermission("CAN_EXECUTE_TASKS");
   appRoot.innerHTML = `
     <div class="app-shell ${state.sidebarCollapsed ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${state.sidebarCollapsed ? "collapsed" : ""}">
         <div class="sidebar-header">
           <div class="sidebar-brand">
-            <span class="logo">WMS</span>
-            <span class="subtitle">Entrepôt</span>
+            <span class="logo">ERP</span>
+            <span class="subtitle">Modules</span>
           </div>
           <button id="sidebar-collapse" class="icon-button" aria-label="Basculer le menu">☰</button>
         </div>
         <nav id="sidebar-nav">
-          ${NAV_ITEMS
+          ${visibleNavItems
             .map(
               (item) => `
                 <a class="nav-link" data-view="${item.id}" href="#${item.id}">
@@ -247,7 +254,7 @@ function buildShell() {
             </div>
           </div>
           <div class="header-actions">
-            <button id="operator-shortcut" class="accent ghost">Mode opérateur</button>
+            ${canUseOperator ? `<button id="operator-shortcut" class="accent ghost">Mode opérateur</button>` : ""}
             <button id="logout-button" class="ghost">Déconnexion</button>
           </div>
         </header>
@@ -262,7 +269,8 @@ function buildShell() {
     clearSession();
     renderLogin();
   });
-  document.getElementById("operator-shortcut").addEventListener("click", () => setView("operator"));
+  const operatorButton = document.getElementById("operator-shortcut");
+  operatorButton?.addEventListener("click", () => setView("operator"));
   document.getElementById("sidebar-collapse").addEventListener("click", toggleSidebar);
   document.getElementById("header-menu-toggle").addEventListener("click", toggleSidebar);
   document.querySelectorAll(".nav-link").forEach((link) => {
@@ -290,6 +298,14 @@ function setView(view, params = {}, options = {}) {
   }
   if (!shellBuilt) {
     buildShell();
+  }
+  const targetNav = NAV_ITEMS.find((item) => item.id === view);
+  if (targetNav && targetNav.permissions && !targetNav.permissions.some((permission) => hasPermission(permission))) {
+    showInlineMessage("error", "Vous n'avez pas accès à ce module.");
+    if (view !== "dashboard") {
+      setView("dashboard", {}, { skipHash: false });
+    }
+    return;
   }
   state.currentView = view;
   state.viewParams = params || {};
@@ -325,6 +341,34 @@ function formatDateTime(value) {
 function formatQuantity(value) {
   if (value === null || value === undefined) return "0";
   return Number(value).toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+}
+
+function formatCurrency(value) {
+  return Number(value || 0).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+}
+
+function formatAuditDetails(details) {
+  if (!details || (typeof details === "object" && Object.keys(details).length === 0)) {
+    return "-";
+  }
+  let data = details;
+  if (typeof details === "string") {
+    try {
+      data = JSON.parse(details);
+    } catch (err) {
+      return details;
+    }
+  }
+  if (Array.isArray(data)) {
+    return data.join(", ");
+  }
+  if (typeof data === "object") {
+    return Object.entries(data)
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .map(([key, value]) => `${key}: ${value}`)
+      .join(", ");
+  }
+  return String(data);
 }
 
 const TABLE_LABELS = {
@@ -434,6 +478,15 @@ function renderView() {
     case "reports":
       renderReporting();
       break;
+    case "finance":
+      renderFinance();
+      break;
+    case "hr":
+      renderHumanResources();
+      break;
+    case "payroll":
+      renderPayroll();
+      break;
     case "admin":
       renderAdministration();
       break;
@@ -449,7 +502,8 @@ function renderView() {
 async function renderDashboard() {
   mainViewEl.innerHTML = `<div class="loader">Chargement du tableau de bord...</div>`;
   try {
-    const [pendingInbounds, openOutbounds, stockByItem, tasks, heatmapData, operatorActivity] = await Promise.all([
+    const [overview, pendingInbounds, openOutbounds, stockByItem, tasks, heatmapData, operatorActivity] = await Promise.all([
+      safeApiFetch("/erp/overview", { modules: {} }),
       safeApiFetch("/reports/pending-inbounds", []),
       safeApiFetch("/reports/open-outbounds", []),
       safeApiFetch("/reports/stock-by-item", []),
@@ -457,6 +511,10 @@ async function renderDashboard() {
       safeApiFetch("/warehouse-map", []),
       safeApiFetch("/reports/operator-activity", { tasks: [], movements: [] })
     ]);
+    const modules = overview?.modules || {};
+    const financeModule = modules.finance || null;
+    const hrModule = modules.hr || null;
+    const payrollModule = modules.payroll || null;
     const totalStock = stockByItem.reduce((sum, row) => sum + Number(row.total_quantity || 0), 0);
     const pendingTasks = tasks.filter((task) => task.status === "PENDING");
     const replenishments = pendingTasks.filter((task) => task.type === "REPLENISHMENT");
@@ -464,8 +522,8 @@ async function renderDashboard() {
     const heatmapPreview = renderHeatmapPreview(heatmapData || []);
     mainViewEl.innerHTML = `
       <div class="view-header">
-        <h1>WMS — cockpit temps réel</h1>
-        <p>Navigation ultra rapide, 1 clic vers chaque flux.</p>
+        <h1>ERP — cockpit temps réel</h1>
+        <p>Navigation ultra rapide, 1 clic vers chaque module.</p>
       </div>
       <div class="metrics-grid">
         <div class="metric">
@@ -484,6 +542,27 @@ async function renderDashboard() {
           <span>Stock global</span>
           <strong>${formatQuantity(totalStock)}</strong>
         </div>
+        ${financeModule
+          ? `<div class="metric emphasis">
+              <span>Factures brouillon</span>
+              <strong>${financeModule.draft_invoices}</strong>
+              <small>${financeModule.overdue_invoices} en retard</small>
+            </div>`
+          : ""}
+        ${hrModule
+          ? `<div class="metric emphasis">
+              <span>Effectif actif</span>
+              <strong>${hrModule.active_employees}</strong>
+              <small>${hrModule.pending_leaves} congés à valider</small>
+            </div>`
+          : ""}
+        ${payrollModule
+          ? `<div class="metric emphasis">
+              <span>Campagnes de paie ouvertes</span>
+              <strong>${payrollModule.open_runs}</strong>
+              <small>${payrollModule.payslips_current_month} bulletins ce mois</small>
+            </div>`
+          : ""}
       </div>
       <div class="grid-responsive">
         <section class="panel">
@@ -1106,11 +1185,18 @@ async function renderAdministration() {
   }
   mainViewEl.innerHTML = `<div class="loader">Chargement de l'administration...</div>`;
   try {
-    const [roles, putawayRules, pickingRules] = await Promise.all([
-      hasPermission("CAN_MANAGE_USERS") ? safeApiFetch("/users/roles", []) : [],
-      hasPermission("CAN_MANAGE_RULES") ? safeApiFetch("/rules/putaway", []) : [],
-      hasPermission("CAN_MANAGE_RULES") ? safeApiFetch("/rules/picking", []) : []
+    const canManageUsers = hasPermission("CAN_MANAGE_USERS");
+    const canManageRules = hasPermission("CAN_MANAGE_RULES");
+    const [users, roles, auditEntries, putawayRules, pickingRules] = await Promise.all([
+      canManageUsers ? safeApiFetch("/users", []) : [],
+      canManageUsers ? safeApiFetch("/users/roles", []) : [],
+      canManageUsers ? safeApiFetch("/admin/audit-log", []) : [],
+      canManageRules ? safeApiFetch("/rules/putaway", []) : [],
+      canManageRules ? safeApiFetch("/rules/picking", []) : []
     ]);
+    const availableRoles = roles.length
+      ? roles
+      : Array.from(new Set(users.map((user) => user.role))).map((role) => ({ name: role, label: role, permissions: [] }));
     mainViewEl.innerHTML = `
       <div class="view-header">
         <h1>Administration & RBAC</h1>
@@ -1119,77 +1205,1126 @@ async function renderAdministration() {
       <div class="quick-links">
         <button class="secondary" data-link="items">Catalogue articles</button>
       </div>
+      ${canManageUsers
+        ? `<div class="grid-two">
+            <section class="panel form-panel">
+              <div class="panel-title"><h2>Créer un utilisateur</h2></div>
+              <form id="user-create-form">
+                <div class="form-group">
+                  <label>Identifiant
+                    <input name="username" required placeholder="jsmith" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Email
+                    <input name="email" type="email" placeholder="user@erp.local" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Mot de passe initial
+                    <input name="password" type="password" required minlength="6" placeholder="••••••" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Rôle
+                    <select name="role" required>
+                      ${availableRoles
+                        .map((role) => `<option value="${role.name}">${role.label || role.name}</option>`)
+                        .join("")}
+                    </select>
+                  </label>
+                </div>
+                <button class="primary" type="submit">Créer</button>
+              </form>
+            </section>
+            <section class="panel">
+              <h2>Utilisateurs</h2>
+              ${users.length
+                ? `<div class="table-wrapper compact">
+                    <table class="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Compte</th>
+                          <th>Email</th>
+                          <th>Rôle</th>
+                          <th>Statut</th>
+                          <th>Historique</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${users
+                          .map(
+                            (user) => `
+                              <tr data-user-id="${user.id}">
+                                <td>
+                                  <strong>${user.username}</strong>
+                                  <div class="text-muted">ID ${user.id}</div>
+                                </td>
+                                <td>
+                                  <div>${user.email || "-"}</div>
+                                  <button class="ghost user-email" type="button" data-id="${user.id}" data-email="${user.email || ""}">Modifier</button>
+                                </td>
+                                <td>
+                                  <select class="user-role-select" data-id="${user.id}">
+                                    ${availableRoles
+                                      .map((role) => `<option value="${role.name}" ${role.name === user.role ? "selected" : ""}>${role.label || role.name}</option>`)
+                                      .join("")}
+                                  </select>
+                                </td>
+                                <td>${renderUserStatus(user.is_active)}</td>
+                                <td>
+                                  <div class="text-muted">Créé : ${formatDateTime(user.created_at)}</div>
+                                  <div class="text-muted">Dernier login : ${formatDateTime(user.last_login_at)}</div>
+                                </td>
+                                <td>
+                                  <div class="user-actions">
+                                    <button class="ghost user-reset" type="button" data-id="${user.id}">Réinitialiser</button>
+                                    <button class="ghost user-toggle" type="button" data-id="${user.id}" data-active="${user.is_active ? "true" : "false"}">${user.is_active ? "Désactiver" : "Réactiver"}</button>
+                                  </div>
+                                </td>
+                              </tr>`
+                          )
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>`
+                : `<p class="empty-state">Aucun utilisateur.</p>`}
+            </section>
+          </div>
+          <section class="panel">
+            <h2>Rôles standard</h2>
+            ${roles.length
+              ? `<div class="table-wrapper compact">
+                  <table>
+                    <thead>
+                      <tr><th>Rôle</th><th>Permissions</th></tr>
+                    </thead>
+                    <tbody>
+                      ${roles
+                        .map(
+                          (role) => `
+                            <tr>
+                              <td>
+                                <strong>${role.label}</strong>
+                                <div class="text-muted">${role.description || role.name}</div>
+                              </td>
+                              <td>${role.permissions?.join(", ") || "-"}</td>
+                            </tr>`
+                        )
+                        .join("")}
+                    </tbody>
+                  </table>
+                </div>`
+              : `<p class="empty-state">Permissions non disponibles.</p>`}
+          </section>
+          <section class="panel">
+            <h2>Journal d'audit</h2>
+            ${auditEntries.length
+              ? `<div class="table-wrapper compact">
+                  <table>
+                    <thead>
+                      <tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Cible</th><th>Détails</th></tr>
+                    </thead>
+                    <tbody>
+                      ${auditEntries
+                        .map(
+                          (entry) => `
+                            <tr>
+                              <td>${formatDateTime(entry.created_at)}</td>
+                              <td>${entry.actor || "Système"}</td>
+                              <td>${entry.action}</td>
+                              <td>${entry.entity}${entry.entity_id ? ` #${entry.entity_id}` : ""}</td>
+                              <td>${formatAuditDetails(entry.details)}</td>
+                            </tr>`
+                        )
+                        .join("")}
+                    </tbody>
+                  </table>
+                </div>`
+              : `<p class="empty-state">Aucun événement récent.</p>`}
+          </section>`
+        : ""}
+      ${canManageRules
+        ? `<div class="grid-two">
+            <section class="panel">
+              <h2>Règles de putaway</h2>
+              ${putawayRules.length
+                ? `<ul class="rule-list">
+                    ${putawayRules
+                      .map(
+                        (rule) => `
+                          <li>
+                            <div>
+                              <strong>${rule.name}</strong>
+                              <span>${rule.strategy}</span>
+                            </div>
+                            <small>Cible: ${JSON.stringify(rule.destination)}</small>
+                          </li>`
+                      )
+                      .join("")}
+                  </ul>`
+                : `<p class="empty-state">Aucune règle définie.</p>`}
+            </section>
+            <section class="panel">
+              <h2>Smart Picking</h2>
+              ${pickingRules.length
+                ? `<ul class="rule-list">
+                    ${pickingRules
+                      .map((rule) => `
+                        <li>
+                          <div>
+                            <strong>${rule.name}</strong>
+                            <span>${rule.grouping}</span>
+                          </div>
+                          <small>Heuristiques: ${JSON.stringify(rule.heuristics)}</small>
+                        </li>`)
+                      .join("")}
+                  </ul>`
+                : `<p class="empty-state">Aucune règle de picking.</p>`}
+            </section>
+          </div>`
+        : ""}
+    `;
+    mainViewEl.querySelectorAll("[data-link]").forEach((btn) => {
+      btn.addEventListener("click", () => setView(btn.dataset.link));
+    });
+    if (canManageUsers) {
+      const createForm = document.getElementById("user-create-form");
+      if (createForm) {
+        createForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const formData = new FormData(createForm);
+          const payload = {
+            username: formData.get("username"),
+            email: formData.get("email") || null,
+            password: formData.get("password"),
+            role: formData.get("role")
+          };
+          try {
+            await apiFetch("/users", { method: "POST", body: JSON.stringify(payload) });
+            showInlineMessage("success", "Utilisateur créé");
+            renderAdministration();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      }
+      mainViewEl.querySelectorAll(".user-role-select").forEach((select) => {
+        select.addEventListener("change", async (event) => {
+          const userId = event.target.dataset.id;
+          try {
+            await apiFetch(`/users/${userId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ role: event.target.value })
+            });
+            showInlineMessage("success", "Rôle mis à jour");
+            renderAdministration();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      });
+      mainViewEl.querySelectorAll(".user-toggle").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const userId = button.dataset.id;
+          const currentActive = button.dataset.active === "true";
+          try {
+            await apiFetch(`/users/${userId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ is_active: !currentActive })
+            });
+            showInlineMessage("success", currentActive ? "Utilisateur désactivé" : "Utilisateur réactivé");
+            renderAdministration();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      });
+      mainViewEl.querySelectorAll(".user-reset").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const userId = button.dataset.id;
+          const password = window.prompt("Nouveau mot de passe (minimum 6 caractères)");
+          if (!password) {
+            return;
+          }
+          if (password.length < 6) {
+            showInlineMessage("error", "Mot de passe trop court");
+            return;
+          }
+          try {
+            await apiFetch(`/users/${userId}/reset-password`, {
+              method: "POST",
+              body: JSON.stringify({ password })
+            });
+            showInlineMessage("success", "Mot de passe réinitialisé");
+            renderAdministration();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      });
+      mainViewEl.querySelectorAll(".user-email").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const userId = button.dataset.id;
+          const nextEmail = window.prompt("Nouvelle adresse email", button.dataset.email || "");
+          if (nextEmail === null) {
+            return;
+          }
+          try {
+            await apiFetch(`/users/${userId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ email: nextEmail || null })
+            });
+            showInlineMessage("success", "Email mis à jour");
+            renderAdministration();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      });
+    }
+  } catch (err) {
+    showInlineMessage("error", err.message);
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger l'administration.</div>`;
+  }
+}
+
+async function renderFinance() {
+  if (!hasPermission("FINANCE_ACCESS")) {
+    mainViewEl.innerHTML = `<div class="empty-state">Accès refusé au module Finance.</div>`;
+    return;
+  }
+  mainViewEl.innerHTML = `<div class="loader">Chargement du module Finance...</div>`;
+  try {
+    const [accounts, journals, fiscalYears, entries, invoices, parties] = await Promise.all([
+      safeApiFetch("/finance/accounts", []),
+      safeApiFetch("/finance/journals", []),
+      safeApiFetch("/finance/fiscal-years", []),
+      safeApiFetch("/finance/entries", []),
+      safeApiFetch("/finance/invoices", []),
+      safeApiFetch("/finance/parties", [])
+    ]);
+    mainViewEl.innerHTML = `
+      <div class="view-header">
+        <h1>Finance & Comptabilité</h1>
+        <p>Plan comptable, journaux et factures unifiés.</p>
+      </div>
+      <div class="grid-two">
+        ${hasPermission("FINANCE_CONFIGURE")
+          ? `<section class="panel form-panel">
+              <div class="panel-title"><h2>Nouveau compte</h2></div>
+              <form id="finance-account-form">
+                <div class="form-group">
+                  <label>Code
+                    <input name="code" required placeholder="401000" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Intitulé
+                    <input name="label" required placeholder="Libellé" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Type
+                    <select name="type" required>
+                      <option value="ASSET">Actif</option>
+                      <option value="LIABILITY">Passif</option>
+                      <option value="EXPENSE">Charge</option>
+                      <option value="INCOME">Produit</option>
+                    </select>
+                  </label>
+                </div>
+                <button class="primary" type="submit">Ajouter</button>
+              </form>
+            </section>`
+          : ""}
+        ${hasPermission("FINANCE_INVOICE")
+          ? `<section class="panel form-panel">
+              <div class="panel-title"><h2>Nouvelle facture</h2></div>
+              <form id="finance-invoice-form">
+                <div class="form-group">
+                  <label>Client / Fournisseur
+                    <select name="party_id" required>
+                      <option value="">Choisir...</option>
+                      ${parties
+                        .map((party) => `<option value="${party.id}">${party.name} (${party.type})</option>`)
+                        .join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Numéro
+                    <input name="number" required placeholder="INV-0002" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Date facture
+                    <input type="date" name="invoice_date" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Échéance
+                    <input type="date" name="due_date" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Total HT
+                    <input type="number" step="0.01" name="total_ht" value="0" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>TVA
+                    <input type="number" step="0.01" name="total_tva" value="0" />
+                  </label>
+                </div>
+                <button class="primary" type="submit">Enregistrer</button>
+              </form>
+            </section>`
+          : ""}
+      </div>
+      ${hasPermission("FINANCE_OPERATE")
+        ? `<section class="panel form-panel">
+            <div class="panel-title"><h2>Saisie rapide d'écriture</h2></div>
+            <form id="finance-entry-form">
+              <div class="form-group">
+                <label>Journal
+                  <select name="journal_id" required>
+                    ${journals.map((journal) => `<option value="${journal.id}">${journal.code} - ${journal.label}</option>`).join("")}
+                  </select>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Exercice
+                  <select name="fiscal_year_id" required>
+                    ${fiscalYears.map((fy) => `<option value="${fy.id}">${fy.label}</option>`).join("")}
+                  </select>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Date d'écriture
+                  <input type="date" name="entry_date" required />
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Référence
+                  <input name="reference" placeholder="PIECE-001" />
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Libellé
+                  <input name="label" placeholder="Libellé" />
+                </label>
+              </div>
+              <div class="form-inline">
+                <label>Compte débit
+                  <select name="debit_account" required>
+                    ${accounts.map((acc) => `<option value="${acc.id}">${acc.code} - ${acc.label}</option>`).join("")}
+                  </select>
+                </label>
+                <label>Montant débit
+                  <input type="number" step="0.01" name="debit_amount" required />
+                </label>
+              </div>
+              <div class="form-inline">
+                <label>Compte crédit
+                  <select name="credit_account" required>
+                    ${accounts.map((acc) => `<option value="${acc.id}">${acc.code} - ${acc.label}</option>`).join("")}
+                  </select>
+                </label>
+                <label>Montant crédit
+                  <input type="number" step="0.01" name="credit_amount" required />
+                </label>
+              </div>
+              <button class="secondary" type="submit">Enregistrer l'écriture</button>
+            </form>
+          </section>`
+        : ""}
       <div class="grid-two">
         <section class="panel">
-          <h2>Rôles standard</h2>
-          ${roles.length
+          <div class="panel-title"><h2>Factures récentes</h2></div>
+          ${invoices.length
             ? `<div class="table-wrapper compact">
                 <table>
-                  <thead>
-                    <tr><th>Rôle</th><th>Permissions</th></tr>
-                  </thead>
+                  <thead><tr><th>Numéro</th><th>Partie</th><th>Montant</th><th>Status</th><th></th></tr></thead>
                   <tbody>
-                    ${roles
+                    ${invoices
+                      .slice(0, 8)
                       .map(
-                        (role) => `
+                        (invoice) => `
                           <tr>
+                            <td>${invoice.number}</td>
+                            <td>${invoice.party_name}</td>
+                            <td>${formatCurrency(invoice.total_ttc)}</td>
+                            <td>${invoice.status}</td>
                             <td>
-                              <strong>${role.label}</strong>
-                              <div class="text-muted">${role.description || role.name}</div>
+                              ${invoice.status === "DRAFT" && hasPermission("FINANCE_OPERATE")
+                                ? `<button class="ghost" data-validate-invoice="${invoice.id}">Valider</button>`
+                                : ""}
                             </td>
-                            <td>${role.permissions?.join(", ") || "-"}</td>
                           </tr>`
                       )
                       .join("")}
                   </tbody>
                 </table>
               </div>`
-            : `<p class="empty-state">Permissions non disponibles.</p>`}
+            : `<p class="empty-state">Aucune facture pour le moment.</p>`}
         </section>
         <section class="panel">
-          <h2>Règles de putaway</h2>
-          ${putawayRules.length
-            ? `<ul class="rule-list">
-                ${putawayRules
+          <div class="panel-title"><h2>Écritures récentes</h2></div>
+          ${entries.length
+            ? `<ul class="simple-list">
+                ${entries
+                  .slice(0, 8)
                   .map(
-                    (rule) => `
+                    (entry) => `
                       <li>
                         <div>
-                          <strong>${rule.name}</strong>
-                          <span>${rule.strategy}</span>
+                          <strong>${entry.reference || entry.id}</strong>
+                          <span>${formatDate(entry.entry_date)} · ${entry.status}</span>
                         </div>
-                        <small>Cible: ${JSON.stringify(rule.destination)}</small>
+                        <span>${entry.lines?.length || 0} lignes</span>
                       </li>`
                   )
                   .join("")}
               </ul>`
-            : `<p class="empty-state">Aucune règle définie.</p>`}
+            : `<p class="empty-state">Aucune écriture.</p>`}
         </section>
       </div>
-      <section class="panel">
-        <h2>Smart Picking</h2>
-        ${pickingRules.length
-          ? `<ul class="rule-list">
-              ${pickingRules
-                .map((rule) => `
-                  <li>
-                    <div>
-                      <strong>${rule.name}</strong>
-                      <span>${rule.grouping}</span>
-                    </div>
-                    <small>Heuristiques: ${JSON.stringify(rule.heuristics)}</small>
-                  </li>`)
-                .join("")}
-            </ul>`
-          : `<p class="empty-state">Aucune règle de picking.</p>`}
-      </section>
     `;
-    mainViewEl.querySelectorAll("[data-link]").forEach((btn) => {
-      btn.addEventListener("click", () => setView(btn.dataset.link));
-    });
+
+    if (hasPermission("FINANCE_CONFIGURE")) {
+      const accountForm = document.getElementById("finance-account-form");
+      accountForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(accountForm);
+        try {
+          await apiFetch("/finance/accounts", {
+            method: "POST",
+            body: JSON.stringify({
+              code: formData.get("code"),
+              label: formData.get("label"),
+              type: formData.get("type"),
+              is_active: true
+            })
+          });
+          showInlineMessage("success", "Compte ajouté");
+          renderFinance();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+
+    if (hasPermission("FINANCE_INVOICE")) {
+      const invoiceForm = document.getElementById("finance-invoice-form");
+      invoiceForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(invoiceForm);
+        try {
+          await apiFetch("/finance/invoices", {
+            method: "POST",
+            body: JSON.stringify({
+              party_id: Number(formData.get("party_id")),
+              number: formData.get("number"),
+              invoice_date: formData.get("invoice_date"),
+              due_date: formData.get("due_date") || null,
+              total_ht: Number(formData.get("total_ht")),
+              total_tva: Number(formData.get("total_tva"))
+            })
+          });
+          showInlineMessage("success", "Facture enregistrée");
+          renderFinance();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+
+    if (hasPermission("FINANCE_OPERATE")) {
+      const entryForm = document.getElementById("finance-entry-form");
+      entryForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(entryForm);
+        const payload = {
+          journal_id: Number(formData.get("journal_id")),
+          fiscal_year_id: Number(formData.get("fiscal_year_id")),
+          entry_date: formData.get("entry_date"),
+          reference: formData.get("reference") || null,
+          label: formData.get("label") || null,
+          lines: [
+            {
+              account_id: Number(formData.get("debit_account")),
+              debit: Number(formData.get("debit_amount")),
+              credit: 0
+            },
+            {
+              account_id: Number(formData.get("credit_account")),
+              debit: 0,
+              credit: Number(formData.get("credit_amount"))
+            }
+          ]
+        };
+        try {
+          await apiFetch("/finance/entries", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          showInlineMessage("success", "Écriture sauvegardée");
+          renderFinance();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+
+      document.querySelectorAll("[data-validate-invoice]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const invoiceId = button.getAttribute("data-validate-invoice");
+          button.disabled = true;
+          try {
+            await apiFetch(`/finance/invoices/${invoiceId}/validate`, { method: "POST" });
+            showInlineMessage("success", "Facture validée");
+            renderFinance();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+            button.disabled = false;
+          }
+        });
+      });
+    }
   } catch (err) {
     showInlineMessage("error", err.message);
-    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger l'administration.</div>`;
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger le module Finance.</div>`;
+  }
+}
+
+async function renderHumanResources() {
+  if (!hasPermission("HR_ACCESS")) {
+    mainViewEl.innerHTML = `<div class="empty-state">Accès refusé au module RH.</div>`;
+    return;
+  }
+  mainViewEl.innerHTML = `<div class="loader">Chargement du module RH...</div>`;
+  try {
+    const [employees, leaveTypes, leaves] = await Promise.all([
+      safeApiFetch("/hr/employees", []),
+      safeApiFetch("/hr/leave-types", []),
+      safeApiFetch("/hr/leaves", [])
+    ]);
+    mainViewEl.innerHTML = `
+      <div class="view-header">
+        <h1>Ressources Humaines</h1>
+        <p>Dossiers salariés, contrats et demandes d'absence.</p>
+      </div>
+      <div class="grid-two">
+        ${hasPermission("HR_MANAGE_EMPLOYEES")
+          ? `<section class="panel form-panel">
+              <div class="panel-title"><h2>Nouveau salarié</h2></div>
+              <form id="hr-employee-form">
+                <div class="form-group">
+                  <label>Matricule
+                    <input name="employee_number" required placeholder="EMP-002" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Prénom
+                    <input name="first_name" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Nom
+                    <input name="last_name" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Email
+                    <input type="email" name="email" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Téléphone
+                    <input name="phone" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Date d'entrée
+                    <input type="date" name="hire_date" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Poste
+                    <input name="job_title" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Département
+                    <input name="department" />
+                  </label>
+                </div>
+                <button class="primary" type="submit">Créer</button>
+              </form>
+            </section>`
+          : ""}
+        ${hasPermission("HR_MANAGE_CONTRACTS")
+          ? `<section class="panel form-panel">
+              <div class="panel-title"><h2>Nouveau contrat</h2></div>
+              <form id="hr-contract-form">
+                <div class="form-group">
+                  <label>Salarié
+                    <select name="employee_id" required>
+                      <option value="">Choisir...</option>
+                      ${employees
+                        .map((employee) => `<option value="${employee.id}">${employee.first_name} ${employee.last_name}</option>`)
+                        .join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Type
+                    <select name="type" required>
+                      <option value="CDI">CDI</option>
+                      <option value="CDD">CDD</option>
+                      <option value="INTERIM">Intérim</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Date début
+                    <input type="date" name="start_date" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Date fin
+                    <input type="date" name="end_date" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Salaire de base
+                    <input type="number" step="0.01" name="base_salary" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Taux activité (%)
+                    <input type="number" step="0.1" name="work_time_pct" value="100" />
+                  </label>
+                </div>
+                <button class="primary" type="submit">Ajouter</button>
+              </form>
+            </section>`
+          : ""}
+      </div>
+      <section class="panel form-panel">
+        <div class="panel-title"><h2>Demande de congé</h2></div>
+        <form id="hr-leave-form">
+          <div class="form-group">
+            <label>Salarié
+              <select name="employee_id" required>
+                <option value="">Choisir...</option>
+                ${employees
+                  .map((employee) => `<option value="${employee.id}">${employee.first_name} ${employee.last_name}</option>`)
+                  .join("")}
+              </select>
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Type
+              <select name="leave_type_id" required>
+                ${leaveTypes.map((type) => `<option value="${type.id}">${type.label}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Début
+              <input type="date" name="start_date" required />
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Fin
+              <input type="date" name="end_date" required />
+            </label>
+          </div>
+          <button class="secondary" type="submit">Soumettre</button>
+        </form>
+      </section>
+      <div class="grid-two">
+        <section class="panel">
+          <div class="panel-title"><h2>Salariés (${employees.length})</h2></div>
+          ${employees.length
+            ? `<div class="table-wrapper compact">
+                <table>
+                  <thead><tr><th>Nom</th><th>Département</th><th>Poste</th><th>Statut</th></tr></thead>
+                  <tbody>
+                    ${employees
+                      .map((employee) => `
+                        <tr>
+                          <td>${employee.first_name} ${employee.last_name}</td>
+                          <td>${employee.department || "-"}</td>
+                          <td>${employee.job_title || "-"}</td>
+                          <td>${employee.status}</td>
+                        </tr>`)
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            : `<p class="empty-state">Aucun salarié enregistré.</p>`}
+        </section>
+        <section class="panel">
+          <div class="panel-title"><h2>Congés & absences</h2></div>
+          ${leaves.length
+            ? `<div class="table-wrapper compact">
+                <table>
+                  <thead><tr><th>Salarié</th><th>Période</th><th>Type</th><th>Statut</th><th></th></tr></thead>
+                  <tbody>
+                    ${leaves
+                      .slice(0, 10)
+                      .map(
+                        (leave) => `
+                          <tr>
+                            <td>${leave.first_name} ${leave.last_name}</td>
+                            <td>${formatDate(leave.start_date)} → ${formatDate(leave.end_date)}</td>
+                            <td>${leave.leave_type}</td>
+                            <td>${leave.status}</td>
+                            <td>
+                              ${leave.status === "PENDING" && hasPermission("HR_APPROVE_LEAVES")
+                                ? `<div class="button-group">
+                                    <button class="ghost" data-approve-leave="${leave.id}">Valider</button>
+                                    <button class="ghost danger" data-reject-leave="${leave.id}">Refuser</button>
+                                  </div>`
+                                : ""}
+                            </td>
+                          </tr>`
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            : `<p class="empty-state">Aucune demande.</p>`}
+        </section>
+      </div>
+    `;
+
+    if (hasPermission("HR_MANAGE_EMPLOYEES")) {
+      const employeeForm = document.getElementById("hr-employee-form");
+      employeeForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(employeeForm);
+        try {
+          await apiFetch("/hr/employees", {
+            method: "POST",
+            body: JSON.stringify({
+              employee_number: formData.get("employee_number"),
+              first_name: formData.get("first_name"),
+              last_name: formData.get("last_name"),
+              email: formData.get("email") || null,
+              phone: formData.get("phone") || null,
+              hire_date: formData.get("hire_date"),
+              job_title: formData.get("job_title") || null,
+              department: formData.get("department") || null
+            })
+          });
+          showInlineMessage("success", "Salarié créé");
+          renderHumanResources();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+
+    if (hasPermission("HR_MANAGE_CONTRACTS")) {
+      const contractForm = document.getElementById("hr-contract-form");
+      contractForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(contractForm);
+        try {
+          await apiFetch(`/hr/employees/${formData.get("employee_id")}/contracts`, {
+            method: "POST",
+            body: JSON.stringify({
+              type: formData.get("type"),
+              start_date: formData.get("start_date"),
+              end_date: formData.get("end_date") || null,
+              base_salary: Number(formData.get("base_salary")),
+              work_time_pct: Number(formData.get("work_time_pct"))
+            })
+          });
+          showInlineMessage("success", "Contrat ajouté");
+          renderHumanResources();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+
+    const leaveForm = document.getElementById("hr-leave-form");
+    leaveForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(leaveForm);
+      try {
+        await apiFetch("/hr/leaves", {
+          method: "POST",
+          body: JSON.stringify({
+            employee_id: Number(formData.get("employee_id")),
+            leave_type_id: Number(formData.get("leave_type_id")),
+            start_date: formData.get("start_date"),
+            end_date: formData.get("end_date")
+          })
+        });
+        showInlineMessage("success", "Demande envoyée");
+        renderHumanResources();
+      } catch (err) {
+        showInlineMessage("error", err.message);
+      }
+    });
+
+    if (hasPermission("HR_APPROVE_LEAVES")) {
+      document.querySelectorAll("[data-approve-leave]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const leaveId = button.getAttribute("data-approve-leave");
+          try {
+            await apiFetch(`/hr/leaves/${leaveId}/approve`, { method: "POST" });
+            renderHumanResources();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      });
+      document.querySelectorAll("[data-reject-leave]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const leaveId = button.getAttribute("data-reject-leave");
+          try {
+            await apiFetch(`/hr/leaves/${leaveId}/reject`, { method: "POST" });
+            renderHumanResources();
+          } catch (err) {
+            showInlineMessage("error", err.message);
+          }
+        });
+      });
+    }
+  } catch (err) {
+    showInlineMessage("error", err.message);
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger le module RH.</div>`;
+  }
+}
+
+async function renderPayroll() {
+  if (!hasPermission("PAYROLL_ACCESS")) {
+    mainViewEl.innerHTML = `<div class="empty-state">Accès refusé au module Paie.</div>`;
+    return;
+  }
+  mainViewEl.innerHTML = `<div class="loader">Chargement de la paie...</div>`;
+  try {
+    const [runs, payslips, payrollItems, employees, contracts] = await Promise.all([
+      safeApiFetch("/payroll/runs", []),
+      safeApiFetch("/payroll/payslips", []),
+      safeApiFetch("/payroll/items", []),
+      safeApiFetch("/hr/employees", []),
+      safeApiFetch("/hr/contracts", [])
+    ]);
+    const earningItems = payrollItems.filter((item) => item.type === "EARNING");
+    const deductionItems = payrollItems.filter((item) => item.type === "DEDUCTION");
+    mainViewEl.innerHTML = `
+      <div class="view-header">
+        <h1>Module Paie</h1>
+        <p>Campagnes de paie, rubriques et bulletins.</p>
+      </div>
+      <div class="grid-two">
+        ${hasPermission("PAYROLL_CONFIGURE")
+          ? `<section class="panel form-panel">
+              <div class="panel-title"><h2>Nouvelle campagne</h2></div>
+              <form id="payroll-run-form">
+                <div class="form-group">
+                  <label>Libellé
+                    <input name="label" required placeholder="Paie Mai 2024" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Début
+                    <input type="date" name="period_start" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Fin
+                    <input type="date" name="period_end" required />
+                  </label>
+                </div>
+                <button class="primary" type="submit">Créer la campagne</button>
+              </form>
+            </section>`
+          : ""}
+        ${hasPermission("PAYROLL_RUN")
+          ? `<section class="panel form-panel">
+              <div class="panel-title"><h2>Bulletin rapide</h2></div>
+              <form id="payroll-payslip-form">
+                <div class="form-group">
+                  <label>Campagne
+                    <select name="payroll_run_id" ${runs.length ? "" : "disabled"} required>
+                      ${runs.length
+                        ? runs.map((run) => `<option value="${run.id}">${run.label} (${run.status})</option>`).join("")
+                        : `<option value="">Aucune campagne ouverte</option>`}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Salarié
+                    <select name="employee_id" required>
+                      ${employees.map((emp) => `<option value="${emp.id}">${emp.first_name} ${emp.last_name}</option>`).join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Contrat (optionnel)
+                    <select name="contract_id">
+                      <option value="">-</option>
+                      ${contracts
+                        .map((contract) => `<option value="${contract.id}">${contract.first_name || ""} ${contract.last_name || ""} - ${contract.type}</option>`)
+                        .join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Rubrique principale
+                    <select name="base_item_id" required>
+                      ${earningItems.map((item) => `<option value="${item.id}">${item.code} - ${item.label}</option>`).join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Montant brut
+                    <input type="number" step="0.01" name="base_amount" required />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Prime (optionnel)
+                    <select name="bonus_item_id">
+                      <option value="">-</option>
+                      ${earningItems.map((item) => `<option value="${item.id}">${item.code} - ${item.label}</option>`).join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Montant prime
+                    <input type="number" step="0.01" name="bonus_amount" />
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Retenue (optionnel)
+                    <select name="deduction_item_id">
+                      <option value="">-</option>
+                      ${deductionItems.map((item) => `<option value="${item.id}">${item.code} - ${item.label}</option>`).join("")}
+                    </select>
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label>Montant retenue
+                    <input type="number" step="0.01" name="deduction_amount" />
+                  </label>
+                </div>
+                <button class="secondary" type="submit" ${runs.length ? "" : "disabled"}>Générer le bulletin</button>
+              </form>
+            </section>`
+          : ""}
+      </div>
+      <div class="grid-two">
+        <section class="panel">
+          <div class="panel-title"><h2>Campagnes (${runs.length})</h2></div>
+          ${runs.length
+            ? `<ul class="simple-list">
+                ${runs
+                  .map((run) => `<li><strong>${run.label}</strong><span>${formatDate(run.period_start)} → ${formatDate(run.period_end)}</span><span class="badge">${run.status}</span></li>`)
+                  .join("")}
+              </ul>`
+            : `<p class="empty-state">Aucune campagne.</p>`}
+        </section>
+        <section class="panel">
+          <div class="panel-title"><h2>Bulletins (${payslips.length})</h2></div>
+          ${payslips.length
+            ? `<div class="table-wrapper compact">
+                <table>
+                  <thead><tr><th>Salarié</th><th>Campagne</th><th>Brut</th><th>Net</th></tr></thead>
+                  <tbody>
+                    ${payslips
+                      .slice(0, 10)
+                      .map(
+                        (slip) => `
+                          <tr>
+                            <td>${slip.first_name} ${slip.last_name}</td>
+                            <td>${slip.run_label}</td>
+                            <td>${formatCurrency(slip.gross_amount)}</td>
+                            <td>${formatCurrency(slip.net_amount)}</td>
+                          </tr>`
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            : `<p class="empty-state">Aucun bulletin généré.</p>`}
+        </section>
+      </div>
+    `;
+
+    if (hasPermission("PAYROLL_CONFIGURE")) {
+      const runForm = document.getElementById("payroll-run-form");
+      runForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(runForm);
+        try {
+          await apiFetch("/payroll/runs", {
+            method: "POST",
+            body: JSON.stringify({
+              label: formData.get("label"),
+              period_start: formData.get("period_start"),
+              period_end: formData.get("period_end"),
+              status: "OPEN"
+            })
+          });
+          showInlineMessage("success", "Campagne créée");
+          renderPayroll();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+
+    if (hasPermission("PAYROLL_RUN")) {
+      const payslipForm = document.getElementById("payroll-payslip-form");
+      payslipForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(payslipForm);
+        const lines = [];
+        const baseAmount = Number(formData.get("base_amount"));
+        if (baseAmount) {
+          lines.push({ payroll_item_id: Number(formData.get("base_item_id")), base_amount: baseAmount, amount: baseAmount });
+        }
+        const bonusAmount = Number(formData.get("bonus_amount"));
+        if (bonusAmount && formData.get("bonus_item_id")) {
+          lines.push({ payroll_item_id: Number(formData.get("bonus_item_id")), base_amount: bonusAmount, amount: bonusAmount });
+        }
+        const deductionAmount = Number(formData.get("deduction_amount"));
+        if (deductionAmount && formData.get("deduction_item_id")) {
+          lines.push({ payroll_item_id: Number(formData.get("deduction_item_id")), base_amount: deductionAmount, amount: deductionAmount });
+        }
+        if (lines.length === 0) {
+          showInlineMessage("error", "Veuillez saisir au moins une ligne de paie");
+          return;
+        }
+        try {
+          await apiFetch("/payroll/payslips", {
+            method: "POST",
+            body: JSON.stringify({
+              payroll_run_id: Number(formData.get("payroll_run_id")),
+              employee_id: Number(formData.get("employee_id")),
+              contract_id: formData.get("contract_id") ? Number(formData.get("contract_id")) : null,
+              lines
+            })
+          });
+          showInlineMessage("success", "Bulletin généré");
+          renderPayroll();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+  } catch (err) {
+    showInlineMessage("error", err.message);
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger le module Paie.</div>`;
   }
 }
 
@@ -1301,6 +2436,10 @@ function renderStatusBadge(status) {
       ? "warning"
       : "";
   return `<span class="badge ${className}">${normalized || "-"}</span>`;
+}
+
+function renderUserStatus(isActive) {
+  return `<span class="badge ${isActive ? "success" : "warning"}">${isActive ? "Actif" : "Inactif"}</span>`;
 }
 
 function renderInboundDetail(order, locations) {
@@ -2113,13 +3252,15 @@ function attachInventoryDetailHandlers(inventory, warehouses, items) {
 async function renderReporting() {
   mainViewEl.innerHTML = `<div class="loader">Chargement du reporting...</div>`;
   try {
-    const [stockByItem, pendingInbounds, openOutbounds, operatorActivity, warehouseMap, tasks] = await Promise.all([
+    const [stockByItem, pendingInbounds, openOutbounds, operatorActivity, warehouseMap, tasks, financeSummary, hrSummary] = await Promise.all([
       safeApiFetch("/reports/stock-by-item", []),
       safeApiFetch("/reports/pending-inbounds", []),
       safeApiFetch("/reports/open-outbounds", []),
       safeApiFetch("/reports/operator-activity", { tasks: [], movements: [] }),
       safeApiFetch("/warehouse-map", []),
-      safeApiFetch("/tasks", [])
+      safeApiFetch("/tasks", []),
+      safeApiFetch("/reports/finance-summary", { enabled: false }),
+      safeApiFetch("/reports/hr-summary", { enabled: false })
     ]);
     const topItems = stockByItem.slice(0, 10);
     const heatmapHtml = renderHeatmapPreview(warehouseMap || []);
@@ -2150,6 +3291,37 @@ async function renderReporting() {
               </ul>`
             : `<p class="empty-state">Pas de données disponibles.</p>`}
         </section>
+        ${financeSummary?.enabled
+          ? `<section class="panel">
+              <div class="panel-title">
+                <h2>Finance</h2>
+                <span>${financeSummary.invoice_status.reduce((sum, item) => sum + Number(item.count || 0), 0)} écritures</span>
+              </div>
+              <div class="stats-list">
+                ${financeSummary.invoice_status
+                  .map((status) => `<div><span>${status.status}</span><strong>${status.count}</strong></div>`)
+                  .join("")}
+              </div>
+              <div class="table-wrapper compact">
+                <table>
+                  <thead><tr><th>Facture</th><th>Client</th><th>Montant</th><th>Status</th></tr></thead>
+                  <tbody>
+                    ${financeSummary.latest_invoices
+                      .map(
+                        (invoice) => `
+                          <tr>
+                            <td>${invoice.number}</td>
+                            <td>${invoice.party_name}</td>
+                            <td>${formatCurrency(invoice.total_ttc)}</td>
+                            <td>${invoice.status}</td>
+                          </tr>`
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>
+            </section>`
+          : ""}
         <section class="panel">
           <div class="panel-title">
             <h2>Activité des opérateurs</h2>
@@ -2196,6 +3368,29 @@ async function renderReporting() {
               </ul>`
             : `<p class="empty-state">Aucune tâche à traiter.</p>`}
         </section>
+        ${hrSummary?.enabled
+          ? `<section class="panel">
+              <div class="panel-title">
+                <h2>RH & Paie</h2>
+                <span>${hrSummary.employees_by_department.reduce((sum, row) => sum + Number(row.count || 0), 0)} collaborateurs</span>
+              </div>
+              <div class="stats-list">
+                ${hrSummary.employees_by_department
+                  .map((row) => `<div><span>${row.department || "N/A"}</span><strong>${row.count}</strong></div>`)
+                  .join("")}
+              </div>
+              <div class="stats-list subtle">
+                ${hrSummary.leaves
+                  .map((row) => `<div><span>${row.status}</span><strong>${row.count}</strong></div>`)
+                  .join("")}
+              </div>
+              <div class="stats-list subtle">
+                ${hrSummary.payroll_runs
+                  .map((row) => `<div><span>${row.status}</span><strong>${row.count}</strong></div>`)
+                  .join("")}
+              </div>
+            </section>`
+          : ""}
       </div>
       <div class="grid-two">
         <section class="panel">
