@@ -1,15 +1,16 @@
 const appRoot = document.getElementById("app");
 
 const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "items", label: "Articles" },
-  { id: "warehouses", label: "Entrepôts & Emplacements" },
-  { id: "inbound", label: "Réceptions" },
-  { id: "outbound", label: "Préparations" },
-  { id: "stock", label: "Stock" },
-  { id: "movements", label: "Mouvements" },
-  { id: "inventory", label: "Inventaires" },
-  { id: "reports", label: "Rapports" }
+  { id: "dashboard", label: "Dashboard", icon: "🏠" },
+  { id: "inbound", label: "Flux entrants", icon: "📥" },
+  { id: "outbound", label: "Flux sortants", icon: "📦" },
+  { id: "stock", label: "Stock", icon: "📊" },
+  { id: "locations", label: "Emplacements", icon: "📍" },
+  { id: "movements", label: "Mouvements internes", icon: "🔁" },
+  { id: "inventory", label: "Inventaires", icon: "✅" },
+  { id: "reporting", label: "Reporting", icon: "📈" },
+  { id: "admin", label: "Administration", icon: "⚙️" },
+  { id: "operator", label: "Mode opérateur", icon: "🤖" }
 ];
 
 const state = {
@@ -24,8 +25,13 @@ const state = {
     }
   })(),
   currentView: "dashboard",
-  viewParams: {}
+  viewParams: {},
+  sidebarCollapsed: localStorage.getItem("wms_sidebar_collapsed") === "true"
 };
+
+if (state.user && !Array.isArray(state.user.permissions)) {
+  state.user.permissions = [];
+}
 
 if (!state.token || !state.user) {
   state.currentView = "login";
@@ -63,7 +69,16 @@ function clearSession() {
   state.user = null;
   state.currentView = "login";
   state.viewParams = {};
+  state.sidebarCollapsed = false;
   shellBuilt = false;
+}
+
+function persistLayout() {
+  localStorage.setItem("wms_sidebar_collapsed", state.sidebarCollapsed ? "true" : "false");
+}
+
+function hasPermission(permission) {
+  return state.user?.permissions?.includes(permission);
 }
 
 function isAdmin() {
@@ -119,6 +134,15 @@ async function apiFetch(path, options = {}) {
     return text ? JSON.parse(text) : null;
   } catch (err) {
     return text;
+  }
+}
+
+async function safeApiFetch(path, fallback = null, options = {}) {
+  try {
+    return await apiFetch(path, options);
+  } catch (error) {
+    console.warn("API warning", path, error.message);
+    return fallback;
   }
 }
 
@@ -189,30 +213,41 @@ function renderLogin() {
 function buildShell() {
   shellBuilt = true;
   appRoot.innerHTML = `
-    <div class="app-shell">
-      <aside class="sidebar">
+    <div class="app-shell ${state.sidebarCollapsed ? "sidebar-collapsed" : ""}">
+      <aside class="sidebar ${state.sidebarCollapsed ? "collapsed" : ""}">
         <div class="sidebar-header">
-          <h2>WMS</h2>
+          <div class="sidebar-brand">
+            <span class="logo">WMS</span>
+            <span class="subtitle">Entrepôt</span>
+          </div>
+          <button id="sidebar-collapse" class="icon-button" aria-label="Basculer le menu">☰</button>
         </div>
         <nav id="sidebar-nav">
           ${NAV_ITEMS
             .map(
-              (item) =>
-                `<a class="nav-link" data-view="${item.id}" href="#${item.id}">${item.label}</a>`
+              (item) => `
+                <a class="nav-link" data-view="${item.id}" href="#${item.id}">
+                  <span class="nav-icon">${item.icon || ""}</span>
+                  <span class="nav-label">${item.label}</span>
+                </a>`
             )
             .join("")}
         </nav>
         <div class="sidebar-footer">
-          &copy; ${new Date().getFullYear()} WMS Demo
+          Ultra WMS — ${new Date().getFullYear()}
         </div>
       </aside>
       <div class="content-area">
         <header class="app-header">
-          <div>
-            <strong>${state.user?.username || ""}</strong>
-            <div class="badge">${state.user?.role || ""}</div>
+          <div class="header-left">
+            <button id="header-menu-toggle" class="icon-button" aria-label="Menu">☰</button>
+            <div>
+              <div class="user-name">${state.user?.username || ""}</div>
+              <div class="badge">${state.user?.role || ""}</div>
+            </div>
           </div>
-          <div class="user-info">
+          <div class="header-actions">
+            <button id="operator-shortcut" class="accent ghost">Mode opérateur</button>
             <button id="logout-button" class="ghost">Déconnexion</button>
           </div>
         </header>
@@ -227,6 +262,9 @@ function buildShell() {
     clearSession();
     renderLogin();
   });
+  document.getElementById("operator-shortcut").addEventListener("click", () => setView("operator"));
+  document.getElementById("sidebar-collapse").addEventListener("click", toggleSidebar);
+  document.getElementById("header-menu-toggle").addEventListener("click", toggleSidebar);
   document.querySelectorAll(".nav-link").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
@@ -234,6 +272,15 @@ function buildShell() {
       setView(view);
     });
   });
+}
+
+function toggleSidebar() {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  persistLayout();
+  if (shellBuilt) {
+    document.querySelector(".app-shell").classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+    document.querySelector(".sidebar").classList.toggle("collapsed", state.sidebarCollapsed);
+  }
 }
 
 function setView(view, params = {}, options = {}) {
@@ -280,6 +327,80 @@ function formatQuantity(value) {
   return Number(value).toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
 }
 
+const TABLE_LABELS = {
+  reference: "Référence",
+  supplier_name: "Fournisseur",
+  customer_name: "Client",
+  status: "Statut",
+  expected_date: "Date prévue",
+  shipping_date: "Expédition",
+  quantity: "Quantité"
+};
+
+function renderSimpleTable(rows = [], columns = []) {
+  if (!rows || rows.length === 0) {
+    return `<p class="empty-state">Aucune donnée.</p>`;
+  }
+  return `
+    <div class="table-wrapper compact">
+      <table>
+        <thead>
+          <tr>
+            ${columns.map((col) => `<th>${TABLE_LABELS[col] || col}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map((row) => `
+              <tr>
+                ${columns
+                  .map((col) => {
+                    if (col === "status") {
+                      return `<td>${renderStatusBadge(row[col])}</td>`;
+                    }
+                    if (col.includes("date")) {
+                      return `<td>${formatDate(row[col])}</td>`;
+                    }
+                    return `<td>${row[col] || "-"}</td>`;
+                  })
+                  .join("")}
+              </tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderHeatmapPreview(warehouses = []) {
+  if (!warehouses.length) {
+    return `<p class="empty-state">Cartographie non disponible.</p>`;
+  }
+  return `
+    <div class="heatmap">
+      ${warehouses
+        .map((warehouse) => {
+          const locations = Array.isArray(warehouse.locations)
+            ? warehouse.locations
+            : [];
+          return `
+            <div class="heatmap-warehouse">
+              <h3>${warehouse.name}</h3>
+              <div class="heatmap-grid">
+                ${locations
+                  .map((loc) => {
+                    const capacity = Number(loc.capacity || 100);
+                    const quantity = Number(loc.quantity || 0);
+                    const fill = Math.min(100, Math.round((quantity / capacity) * 100));
+                    return `<span class="heatmap-cell" title="${loc.code} — ${formatQuantity(quantity)}">${fill}%</span>`;
+                  })
+                  .join("")}
+              </div>
+            </div>`;
+        })
+        .join("")}
+    </div>`;
+}
+
 function renderView() {
   clearMessage();
   if (!mainViewEl) return;
@@ -291,6 +412,7 @@ function renderView() {
       renderItems(state.viewParams);
       break;
     case "warehouses":
+    case "locations":
       renderWarehouses(state.viewParams);
       break;
     case "inbound":
@@ -308,8 +430,15 @@ function renderView() {
     case "inventory":
       renderInventory(state.viewParams);
       break;
+    case "reporting":
     case "reports":
-      renderReports();
+      renderReporting();
+      break;
+    case "admin":
+      renderAdministration();
+      break;
+    case "operator":
+      renderOperatorView();
       break;
     default:
       renderDashboard();
@@ -320,40 +449,80 @@ function renderView() {
 async function renderDashboard() {
   mainViewEl.innerHTML = `<div class="loader">Chargement du tableau de bord...</div>`;
   try {
-    const [items, pendingInbounds, openOutbounds, stockByItem] = await Promise.all([
-      apiFetch("/items"),
-      apiFetch("/reports/pending-inbounds"),
-      apiFetch("/reports/open-outbounds"),
-      apiFetch("/reports/stock-by-item")
+    const [pendingInbounds, openOutbounds, stockByItem, tasks, heatmapData, operatorActivity] = await Promise.all([
+      safeApiFetch("/reports/pending-inbounds", []),
+      safeApiFetch("/reports/open-outbounds", []),
+      safeApiFetch("/reports/stock-by-item", []),
+      safeApiFetch("/tasks", []),
+      safeApiFetch("/warehouse-map", []),
+      safeApiFetch("/reports/operator-activity", { tasks: [], movements: [] })
     ]);
-    const activeItems = items.filter((item) => item.is_active).length;
     const totalStock = stockByItem.reduce((sum, row) => sum + Number(row.total_quantity || 0), 0);
+    const pendingTasks = tasks.filter((task) => task.status === "PENDING");
+    const replenishments = pendingTasks.filter((task) => task.type === "REPLENISHMENT");
+    const cycleCounts = pendingTasks.filter((task) => task.type === "CYCLE_COUNT");
+    const heatmapPreview = renderHeatmapPreview(heatmapData || []);
     mainViewEl.innerHTML = `
       <div class="view-header">
-        <h1>Tableau de bord</h1>
+        <h1>WMS — cockpit temps réel</h1>
+        <p>Navigation ultra rapide, 1 clic vers chaque flux.</p>
       </div>
-      <div class="card-grid">
-        <div class="stat-card">
-          <h3>Articles actifs</h3>
-          <div class="value">${activeItems}</div>
+      <div class="metrics-grid">
+        <div class="metric">
+          <span>Réceptions ouvertes</span>
+          <strong>${pendingInbounds.length}</strong>
         </div>
-        <div class="stat-card">
-          <h3>Réceptions ouvertes</h3>
-          <div class="value">${pendingInbounds.length}</div>
+        <div class="metric">
+          <span>Commandes à expédier</span>
+          <strong>${openOutbounds.length}</strong>
         </div>
-        <div class="stat-card">
-          <h3>Commandes à préparer</h3>
-          <div class="value">${openOutbounds.length}</div>
+        <div class="metric">
+          <span>Tâches internes actives</span>
+          <strong>${pendingTasks.length}</strong>
         </div>
-        <div class="stat-card">
-          <h3>Quantité totale en stock</h3>
-          <div class="value">${formatQuantity(totalStock)}</div>
+        <div class="metric">
+          <span>Stock global</span>
+          <strong>${formatQuantity(totalStock)}</strong>
         </div>
+      </div>
+      <div class="grid-responsive">
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Ruptures imminentes</h2>
+            <span>${replenishments.length} réappros</span>
+          </div>
+          ${replenishments.length
+            ? `<ul class="simple-list">${replenishments
+                .slice(0, 5)
+                .map((task) => `<li><strong>${task.metadata?.location_code || task.metadata?.location_id}</strong><span>Min ${formatQuantity(task.metadata?.min_qty || 0)}</span></li>`)
+                .join("")}</ul>`
+            : `<p class="empty-state">Aucune alerte.</p>`}
+        </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Inventaires tournants</h2>
+            <span>${cycleCounts.length} à effectuer</span>
+          </div>
+          ${cycleCounts.length
+            ? `<ul class="simple-list">${cycleCounts
+                .slice(0, 5)
+                .map((task) => `<li>${task.metadata?.location_id ? `Emplacement ${task.metadata.location_id}` : task.type}</li>`)
+                .join("")}</ul>`
+            : `<p class="empty-state">Aucune mission en attente.</p>`}
+        </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Heatmap instantanée</h2>
+            <span>Visualisez les zones pleines</span>
+          </div>
+          ${heatmapPreview}
+        </section>
       </div>
       <div class="quick-links">
-        <button class="secondary" data-link="inbound">Réceptions en attente</button>
-        <button class="secondary" data-link="outbound">Commandes à préparer</button>
-        <button class="secondary" data-link="stock">Stock par article</button>
+        <button class="primary" data-link="operator">Mode opérateur</button>
+        <button class="secondary" data-link="inbound">Lancer une réception</button>
+        <button class="secondary" data-link="outbound">Optimiser le picking</button>
+        <button class="secondary" data-link="reporting">Reporting avancé</button>
       </div>
     `;
     mainViewEl.querySelectorAll("[data-link]").forEach((btn) => {
@@ -684,13 +853,13 @@ async function renderWarehouses(params = {}) {
 
     document.querySelectorAll("[data-view-locations]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        setView("warehouses", { warehouseId: btn.dataset.viewLocations }, { skipHash: true });
+        setView("locations", { warehouseId: btn.dataset.viewLocations }, { skipHash: true });
       });
     });
 
     const closeBtn = document.getElementById("close-locations");
     if (closeBtn) {
-      closeBtn.addEventListener("click", () => setView("warehouses", {}, { skipHash: true }));
+      closeBtn.addEventListener("click", () => setView("locations", {}, { skipHash: true }));
     }
 
     if (isAdmin()) {
@@ -709,7 +878,7 @@ async function renderWarehouses(params = {}) {
               })
             });
             showInlineMessage("success", "Entrepôt créé");
-            setView("warehouses", {}, { skipHash: true });
+            setView("locations", {}, { skipHash: true });
           } catch (err) {
             showInlineMessage("error", err.message);
           }
@@ -733,7 +902,7 @@ async function renderWarehouses(params = {}) {
               body: JSON.stringify(payload)
             });
             showInlineMessage("success", "Emplacement créé");
-            setView("warehouses", { warehouseId: payload.warehouse_id }, { skipHash: true });
+            setView("locations", { warehouseId: payload.warehouse_id }, { skipHash: true });
           } catch (err) {
             showInlineMessage("error", err.message);
           }
@@ -927,6 +1096,199 @@ async function renderInbound(params = {}) {
   } catch (err) {
     showInlineMessage("error", err.message);
     mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger les réceptions.</div>`;
+  }
+}
+
+async function renderAdministration() {
+  if (!hasPermission("CAN_MANAGE_USERS") && !hasPermission("CAN_MANAGE_RULES")) {
+    mainViewEl.innerHTML = `<div class="empty-state">Accès restreint à l'administration.</div>`;
+    return;
+  }
+  mainViewEl.innerHTML = `<div class="loader">Chargement de l'administration...</div>`;
+  try {
+    const [roles, putawayRules, pickingRules] = await Promise.all([
+      hasPermission("CAN_MANAGE_USERS") ? safeApiFetch("/users/roles", []) : [],
+      hasPermission("CAN_MANAGE_RULES") ? safeApiFetch("/rules/putaway", []) : [],
+      hasPermission("CAN_MANAGE_RULES") ? safeApiFetch("/rules/picking", []) : []
+    ]);
+    mainViewEl.innerHTML = `
+      <div class="view-header">
+        <h1>Administration & RBAC</h1>
+        <p>Contrôlez les rôles, permissions et règles d'automatisation.</p>
+      </div>
+      <div class="quick-links">
+        <button class="secondary" data-link="items">Catalogue articles</button>
+      </div>
+      <div class="grid-two">
+        <section class="panel">
+          <h2>Rôles standard</h2>
+          ${roles.length
+            ? `<div class="table-wrapper compact">
+                <table>
+                  <thead>
+                    <tr><th>Rôle</th><th>Permissions</th></tr>
+                  </thead>
+                  <tbody>
+                    ${roles
+                      .map(
+                        (role) => `
+                          <tr>
+                            <td>
+                              <strong>${role.label}</strong>
+                              <div class="text-muted">${role.description || role.name}</div>
+                            </td>
+                            <td>${role.permissions?.join(", ") || "-"}</td>
+                          </tr>`
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            : `<p class="empty-state">Permissions non disponibles.</p>`}
+        </section>
+        <section class="panel">
+          <h2>Règles de putaway</h2>
+          ${putawayRules.length
+            ? `<ul class="rule-list">
+                ${putawayRules
+                  .map(
+                    (rule) => `
+                      <li>
+                        <div>
+                          <strong>${rule.name}</strong>
+                          <span>${rule.strategy}</span>
+                        </div>
+                        <small>Cible: ${JSON.stringify(rule.destination)}</small>
+                      </li>`
+                  )
+                  .join("")}
+              </ul>`
+            : `<p class="empty-state">Aucune règle définie.</p>`}
+        </section>
+      </div>
+      <section class="panel">
+        <h2>Smart Picking</h2>
+        ${pickingRules.length
+          ? `<ul class="rule-list">
+              ${pickingRules
+                .map((rule) => `
+                  <li>
+                    <div>
+                      <strong>${rule.name}</strong>
+                      <span>${rule.grouping}</span>
+                    </div>
+                    <small>Heuristiques: ${JSON.stringify(rule.heuristics)}</small>
+                  </li>`)
+                .join("")}
+            </ul>`
+          : `<p class="empty-state">Aucune règle de picking.</p>`}
+      </section>
+    `;
+    mainViewEl.querySelectorAll("[data-link]").forEach((btn) => {
+      btn.addEventListener("click", () => setView(btn.dataset.link));
+    });
+  } catch (err) {
+    showInlineMessage("error", err.message);
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger l'administration.</div>`;
+  }
+}
+
+async function renderOperatorView() {
+  if (!hasPermission("CAN_EXECUTE_TASKS")) {
+    mainViewEl.innerHTML = `<div class="empty-state">Le mode opérateur nécessite des droits d'exécution.</div>`;
+    return;
+  }
+  mainViewEl.innerHTML = `<div class="loader">Préparation du mode opérateur...</div>`;
+  try {
+    const tasks = await safeApiFetch("/tasks", []);
+    const myTasks = tasks.filter(
+      (task) => !task.assigned_to || task.assigned_to === state.user?.id
+    );
+    const nextTask = myTasks[0] || null;
+    mainViewEl.innerHTML = `
+      <div class="operator-hero">
+        <h1>Mode opérateur</h1>
+        <p>Grandes zones tactiles, validation en un geste.</p>
+      </div>
+      <div class="operator-grid">
+        ${[
+          { id: "inbound", label: "Réception", color: "blue" },
+          { id: "outbound", label: "Picking", color: "green" },
+          { id: "stock", label: "Mise en stock", color: "purple" }
+        ]
+          .map(
+            (action) => `
+              <button class="operator-action ${action.color}" data-go="${action.id}">
+                ${action.label}
+              </button>`
+          )
+          .join("")}
+      </div>
+      <section class="panel">
+        <div class="panel-title">
+          <h2>Tâche à exécuter</h2>
+          <span>${nextTask ? `#${nextTask.id}` : "Libre"}</span>
+        </div>
+        ${nextTask
+          ? `<div class="operator-task">
+              <div>
+                <strong>${nextTask.type}</strong>
+                <p>${nextTask.metadata?.location_code || nextTask.metadata?.location_id || ""}</p>
+              </div>
+              <div class="operator-task-actions">
+                <button id="operator-start" class="secondary">Commencer</button>
+                <button id="operator-finish" class="primary">Terminer</button>
+              </div>
+            </div>`
+          : `<p class="empty-state">Aucune tâche attribuée.</p>`}
+      </section>
+      <section class="panel">
+        <h2>File d'attente</h2>
+        ${myTasks.length
+          ? `<ul class="simple-list">
+              ${myTasks
+                .slice(0, 8)
+                .map((task) => `<li>${task.type} — ${task.metadata?.location_code || task.metadata?.location_id || ""}</li>`)
+                .join("")}
+            </ul>`
+          : `<p class="empty-state">File vide.</p>`}
+      </section>
+    `;
+    document.querySelectorAll("[data-go]").forEach((btn) => {
+      btn.addEventListener("click", () => setView(btn.dataset.go));
+    });
+    if (nextTask) {
+      const startBtn = document.getElementById("operator-start");
+      const finishBtn = document.getElementById("operator-finish");
+      const payloadBase = nextTask.assigned_to ? {} : { assigned_to: state.user.id };
+      startBtn.addEventListener("click", async () => {
+        try {
+          await apiFetch(`/tasks/${nextTask.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ ...payloadBase, status: "IN_PROGRESS" })
+          });
+          showInlineMessage("success", "Tâche démarrée");
+          renderOperatorView();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+      finishBtn.addEventListener("click", async () => {
+        try {
+          await apiFetch(`/tasks/${nextTask.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ ...payloadBase, status: "DONE" })
+          });
+          showInlineMessage("success", "Tâche clôturée");
+          renderOperatorView();
+        } catch (err) {
+          showInlineMessage("error", err.message);
+        }
+      });
+    }
+  } catch (err) {
+    showInlineMessage("error", err.message);
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger le mode opérateur.</div>`;
   }
 }
 
@@ -1748,113 +2110,107 @@ function attachInventoryDetailHandlers(inventory, warehouses, items) {
   }
 }
 
-async function renderReports() {
-  mainViewEl.innerHTML = `<div class="loader">Chargement des rapports...</div>`;
+async function renderReporting() {
+  mainViewEl.innerHTML = `<div class="loader">Chargement du reporting...</div>`;
   try {
-    const [stockByItem, pendingInbounds, openOutbounds] = await Promise.all([
-      apiFetch("/reports/stock-by-item"),
-      apiFetch("/reports/pending-inbounds"),
-      apiFetch("/reports/open-outbounds")
+    const [stockByItem, pendingInbounds, openOutbounds, operatorActivity, warehouseMap, tasks] = await Promise.all([
+      safeApiFetch("/reports/stock-by-item", []),
+      safeApiFetch("/reports/pending-inbounds", []),
+      safeApiFetch("/reports/open-outbounds", []),
+      safeApiFetch("/reports/operator-activity", { tasks: [], movements: [] }),
+      safeApiFetch("/warehouse-map", []),
+      safeApiFetch("/tasks", [])
     ]);
+    const topItems = stockByItem.slice(0, 10);
+    const heatmapHtml = renderHeatmapPreview(warehouseMap || []);
+    const pendingTasks = tasks.filter((task) => task.status === "PENDING");
     mainViewEl.innerHTML = `
       <div class="view-header">
-        <h1>Rapports</h1>
+        <h1>Reporting temps réel</h1>
+        <p>Automatisations, tâches et santé de l'entrepôt en un coup d'œil.</p>
       </div>
-      <section class="panel">
-        <h2>Stock par article</h2>
-        ${stockByItem.length
-          ? `<div class="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>Libellé</th>
-                    <th>Quantité totale</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${stockByItem
-                    .map(
-                      (row) => `
-                        <tr>
-                          <td>${row.sku}</td>
-                          <td>${row.name}</td>
-                          <td>${formatQuantity(row.total_quantity)}</td>
-                        </tr>
-                      `
-                    )
-                    .join("")}
-                </tbody>
-              </table>
-            </div>`
-          : `<p class="empty-state">Aucun article trouvé.</p>`}
-      </section>
-      <section class="panel">
-        <h2>Réceptions en attente</h2>
-        ${pendingInbounds.length
-          ? `<div class="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Référence</th>
-                    <th>Fournisseur</th>
-                    <th>Statut</th>
-                    <th>Date prévue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${pendingInbounds
-                    .map(
-                      (order) => `
-                        <tr>
-                          <td>${order.reference}</td>
-                          <td>${order.supplier_name || "-"}</td>
-                          <td>${renderStatusBadge(order.status)}</td>
-                          <td>${formatDate(order.expected_date)}</td>
-                        </tr>
-                      `
-                    )
-                    .join("")}
-                </tbody>
-              </table>
-            </div>`
-          : `<p class="empty-state">Aucune réception en attente.</p>`}
-      </section>
-      <section class="panel">
-        <h2>Commandes ouvertes</h2>
-        ${openOutbounds.length
-          ? `<div class="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Référence</th>
-                    <th>Client</th>
-                    <th>Statut</th>
-                    <th>Date d'expédition</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${openOutbounds
-                    .map(
-                      (order) => `
-                        <tr>
-                          <td>${order.reference}</td>
-                          <td>${order.customer_name || "-"}</td>
-                          <td>${renderStatusBadge(order.status)}</td>
-                          <td>${formatDate(order.shipping_date)}</td>
-                        </tr>
-                      `
-                    )
-                    .join("")}
-                </tbody>
-              </table>
-            </div>`
-          : `<p class="empty-state">Aucune commande ouverte.</p>`}
-      </section>
+      <div class="grid-responsive">
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Top 10 articles en mouvement</h2>
+            <span>${formatDate(new Date())}</span>
+          </div>
+          ${topItems.length
+            ? `<ul class="simple-list">
+                ${topItems
+                  .map(
+                    (item, index) => `
+                      <li>
+                        <strong>#${index + 1} — ${item.sku}</strong>
+                        <span>${item.name}</span>
+                        <span class="value">${formatQuantity(item.total_quantity)}</span>
+                      </li>`
+                  )
+                  .join("")}
+              </ul>`
+            : `<p class="empty-state">Pas de données disponibles.</p>`}
+        </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Activité des opérateurs</h2>
+            <span>7 derniers jours</span>
+          </div>
+          <div class="stats-list">
+            ${operatorActivity.tasks
+              .map((row) => `<div><span>${row.status}</span><strong>${row.count || row.count === 0 ? row.count : row.count}</strong></div>`)
+              .join("") || `<p class="empty-state">Aucune activité.</p>`}
+          </div>
+          <div class="stats-list subtle">
+            ${operatorActivity.movements
+              .map((row) => `<div><span>${row.movement_type}</span><strong>${row.count}</strong></div>`)
+              .join("")}
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Heatmap entrepôt</h2>
+            <span>Occupation par zone</span>
+          </div>
+          ${heatmapHtml}
+        </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Tâches en cours</h2>
+            <span>${pendingTasks.length} en attente</span>
+          </div>
+          ${pendingTasks.length
+            ? `<ul class="task-list">
+                ${pendingTasks
+                  .slice(0, 6)
+                  .map(
+                    (task) => `
+                      <li>
+                        <div>
+                          <strong>${task.type}</strong>
+                          <span>${task.metadata?.location_code || task.metadata?.location_id || ""}</span>
+                        </div>
+                        <span class="badge">${task.priority}</span>
+                      </li>`
+                  )
+                  .join("")}
+              </ul>`
+            : `<p class="empty-state">Aucune tâche à traiter.</p>`}
+        </section>
+      </div>
+      <div class="grid-two">
+        <section class="panel">
+          <h2>Réceptions en attente</h2>
+          ${renderSimpleTable(pendingInbounds, ["reference", "supplier_name", "status", "expected_date"])}
+        </section>
+        <section class="panel">
+          <h2>Commandes ouvertes</h2>
+          ${renderSimpleTable(openOutbounds, ["reference", "customer_name", "status", "shipping_date"])}
+        </section>
+      </div>
     `;
   } catch (err) {
     showInlineMessage("error", err.message);
-    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger les rapports.</div>`;
+    mainViewEl.innerHTML = `<div class="empty-state">Impossible de charger le reporting.</div>`;
   }
 }
 

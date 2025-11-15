@@ -24,6 +24,88 @@ const pool = new Pool({
 
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret";
 
+const PERMISSIONS = {
+  CAN_MANAGE_USERS: "Gestion des utilisateurs",
+  CAN_CREATE_INBOUND_ORDER: "Création d'ordres entrants",
+  CAN_RECEIVE: "Réceptions et contrôle qualité",
+  CAN_PICK: "Picking",
+  CAN_MOVE_STOCK: "Mouvements internes",
+  CAN_ACCESS_INVENTORY: "Consultation des stocks",
+  CAN_VIEW_REPORTING: "Reporting avancé",
+  CAN_MANAGE_RULES: "Configuration des règles",
+  CAN_MANAGE_ITEMS: "Gestion du catalogue",
+  CAN_VIEW_TASKS: "Visualisation des tâches",
+  CAN_MANAGE_TASKS: "Pilotage du moteur de tâches",
+  CAN_VIEW_HEATMAP: "Cartographie de l'entrepôt",
+  CAN_MANAGE_QUALITY: "Gestion qualité",
+  CAN_EXECUTE_TASKS: "Exécution de ses tâches"
+};
+
+const ALL_PERMISSIONS = Object.keys(PERMISSIONS);
+
+const ROLE_DEFINITIONS = {
+  ADMIN: {
+    label: "Administrateur",
+    permissions: ALL_PERMISSIONS
+  },
+  LOGISTICS_MANAGER: {
+    label: "Manager Logistique",
+    permissions: [
+      "CAN_CREATE_INBOUND_ORDER",
+      "CAN_RECEIVE",
+      "CAN_PICK",
+      "CAN_MOVE_STOCK",
+      "CAN_ACCESS_INVENTORY",
+      "CAN_VIEW_REPORTING",
+      "CAN_MANAGE_RULES",
+      "CAN_MANAGE_ITEMS",
+      "CAN_VIEW_TASKS",
+      "CAN_MANAGE_TASKS",
+      "CAN_VIEW_HEATMAP",
+      "CAN_EXECUTE_TASKS"
+    ]
+  },
+  PICKER: {
+    label: "Préparateur",
+    permissions: [
+      "CAN_PICK",
+      "CAN_MOVE_STOCK",
+      "CAN_ACCESS_INVENTORY",
+      "CAN_VIEW_TASKS",
+      "CAN_EXECUTE_TASKS"
+    ]
+  },
+  RECEIVER: {
+    label: "Réceptionnaire",
+    permissions: [
+      "CAN_CREATE_INBOUND_ORDER",
+      "CAN_RECEIVE",
+      "CAN_MOVE_STOCK",
+      "CAN_ACCESS_INVENTORY",
+      "CAN_VIEW_TASKS",
+      "CAN_MANAGE_QUALITY",
+      "CAN_EXECUTE_TASKS"
+    ]
+  },
+  FORKLIFT: {
+    label: "Cariste",
+    permissions: [
+      "CAN_MOVE_STOCK",
+      "CAN_VIEW_TASKS",
+      "CAN_EXECUTE_TASKS",
+      "CAN_ACCESS_INVENTORY"
+    ]
+  },
+  VIEWER: {
+    label: "Viewer",
+    permissions: [
+      "CAN_ACCESS_INVENTORY",
+      "CAN_VIEW_REPORTING",
+      "CAN_VIEW_HEATMAP"
+    ]
+  }
+};
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16);
   const hash = crypto.scryptSync(password, salt, 64);
@@ -118,7 +200,7 @@ function authenticateToken(req, res, next) {
   }
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.user = payload;
+    req.user = { ...payload, permissions: getPermissionsForRole(payload.role) };
     next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -132,6 +214,205 @@ function authorizeRoles(...roles) {
     }
     next();
   };
+}
+
+function getPermissionsForRole(role) {
+  const definition = ROLE_DEFINITIONS[role];
+  if (!definition) {
+    return [];
+  }
+  return definition.permissions || [];
+}
+
+function userHasPermission(user, permission) {
+  return Boolean(user?.permissions?.includes(permission));
+}
+
+function authorizePermissions(...permissions) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const missing = permissions.filter((perm) => !userHasPermission(req.user, perm));
+    if (missing.length > 0) {
+      return res.status(403).json({ error: "Missing permissions", details: missing });
+    }
+    next();
+  };
+}
+
+function buildUserContext(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    permissions: getPermissionsForRole(row.role)
+  };
+}
+
+async function ensureAutomationTables() {
+  await pool.query(
+    `ALTER TABLE stock
+       ADD COLUMN IF NOT EXISTS qa_status VARCHAR(20) NOT NULL DEFAULT 'OK'`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS permissions (
+        name        VARCHAR(60) PRIMARY KEY,
+        description TEXT
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS roles (
+        name        VARCHAR(40) PRIMARY KEY,
+        label       VARCHAR(80) NOT NULL,
+        description TEXT
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS role_permissions (
+        role_name       VARCHAR(40) REFERENCES roles(name) ON DELETE CASCADE,
+        permission_name VARCHAR(60) REFERENCES permissions(name) ON DELETE CASCADE,
+        PRIMARY KEY (role_name, permission_name)
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS putaway_rules (
+        id          SERIAL PRIMARY KEY,
+        name        VARCHAR(120) NOT NULL,
+        strategy    VARCHAR(40) NOT NULL,
+        criteria    JSONB NOT NULL,
+        destination JSONB NOT NULL,
+        priority    INT NOT NULL DEFAULT 0,
+        active      BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS picking_rules (
+        id          SERIAL PRIMARY KEY,
+        name        VARCHAR(120) NOT NULL,
+        grouping    VARCHAR(40) NOT NULL,
+        heuristics  JSONB NOT NULL,
+        priority    INT NOT NULL DEFAULT 0,
+        active      BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS tasks (
+        id             SERIAL PRIMARY KEY,
+        type           VARCHAR(40) NOT NULL,
+        status         VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        priority       VARCHAR(10) NOT NULL DEFAULT 'MEDIUM',
+        assigned_to    INT REFERENCES users(id),
+        metadata       JSONB NOT NULL DEFAULT '{}',
+        auto_generated BOOLEAN NOT NULL DEFAULT FALSE,
+        due_at         TIMESTAMP,
+        created_at     TIMESTAMP NOT NULL DEFAULT NOW()
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS location_thresholds (
+        location_id INT PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+        min_qty     NUMERIC(14,3) NOT NULL DEFAULT 0,
+        max_qty     NUMERIC(14,3)
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS quality_inspections (
+        id               SERIAL PRIMARY KEY,
+        inbound_order_id INT REFERENCES inbound_orders(id) ON DELETE SET NULL,
+        stock_id         INT REFERENCES stock(id) ON DELETE SET NULL,
+        status           VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        notes            TEXT,
+        created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+        resolved_at      TIMESTAMP
+     )`
+  );
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS cycle_count_runs (
+        id           SERIAL PRIMARY KEY,
+        warehouse_id INT REFERENCES warehouses(id) ON DELETE CASCADE,
+        strategy     VARCHAR(30) NOT NULL,
+        locations    JSONB NOT NULL,
+        created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+     )`
+  );
+}
+
+async function ensureRbacSeed() {
+  for (const [name, description] of Object.entries(PERMISSIONS)) {
+    await pool.query(
+      `INSERT INTO permissions (name, description)
+       VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description`,
+      [name, description]
+    );
+  }
+
+  for (const [name, definition] of Object.entries(ROLE_DEFINITIONS)) {
+    await pool.query(
+      `INSERT INTO roles (name, label, description)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (name) DO UPDATE SET label = EXCLUDED.label, description = COALESCE(EXCLUDED.description, roles.description)`,
+      [name, definition.label, definition.description || null]
+    );
+
+    for (const permission of definition.permissions || []) {
+      await pool.query(
+        `INSERT INTO role_permissions (role_name, permission_name)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [name, permission]
+      );
+    }
+  }
+}
+
+async function ensureRuleSeed() {
+  const existingPutaway = await pool.query(`SELECT COUNT(*)::INT AS count FROM putaway_rules`);
+  if (existingPutaway.rows[0].count === 0) {
+    await pool.query(
+      `INSERT INTO putaway_rules (name, strategy, criteria, destination, priority)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        "Chaussures → Allée 12",
+        "FAMILY",
+        JSON.stringify({ family: "CHAUSSURES" }),
+        JSON.stringify({ aisle: "12", zone: "PICK" }),
+        10
+      ]
+    );
+  }
+
+  const existingPicking = await pool.query(`SELECT COUNT(*)::INT AS count FROM picking_rules`);
+  if (existingPicking.rows[0].count === 0) {
+    await pool.query(
+      `INSERT INTO picking_rules (name, grouping, heuristics, priority)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        "Picking ABC",
+        "ZONE",
+        JSON.stringify({ distance: "ABC", split: "auto" }),
+        5
+      ]
+    );
+  }
+}
+
+async function bootstrap() {
+  await ensureAutomationTables();
+  await ensureRbacSeed();
+  await ensureRuleSeed();
 }
 
 app.get("/health", asyncHandler(async (req, res) => {
@@ -160,16 +441,17 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
-  const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: "8h" });
-  res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+  const userContext = buildUserContext(user);
+  const token = jwt.sign({ id: userContext.id, username: userContext.username, role: userContext.role }, JWT_SECRET, { expiresIn: "8h" });
+  res.json({ token, user: userContext });
 }));
 
-app.get("/users", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(async (req, res) => {
+app.get("/users", authenticateToken, authorizePermissions("CAN_MANAGE_USERS"), asyncHandler(async (req, res) => {
   const result = await pool.query("SELECT id, username, role, email, is_active, created_at FROM users ORDER BY id");
   res.json(result.rows);
 }));
 
-app.post("/users", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(async (req, res) => {
+app.post("/users", authenticateToken, authorizePermissions("CAN_MANAGE_USERS"), asyncHandler(async (req, res) => {
   const { username, password, role, email } = req.body;
   if (!username || !password || !role) {
     return res.status(400).json({ error: "username, password and role are required" });
@@ -184,7 +466,19 @@ app.post("/users", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(asyn
   res.status(201).json(result.rows[0]);
 }));
 
-app.get("/items", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/users/roles", authenticateToken, authorizePermissions("CAN_MANAGE_USERS"), asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT r.name, r.label, r.description,
+            COALESCE(json_agg(rp.permission_name) FILTER (WHERE rp.permission_name IS NOT NULL), '[]'::json) AS permissions
+     FROM roles r
+     LEFT JOIN role_permissions rp ON rp.role_name = r.name
+     GROUP BY r.name, r.label, r.description
+     ORDER BY r.name`
+  );
+  res.json(result.rows);
+}));
+
+app.get("/items", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
   const { search } = req.query;
   let query = "SELECT id, sku, name, barcode, unit, is_active FROM items";
   const values = [];
@@ -197,7 +491,7 @@ app.get("/items", authenticateToken, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.post("/items", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/items", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), asyncHandler(async (req, res) => {
   const { sku, name, description, unit, barcode, is_active } = req.body;
   if (!sku || !name) {
     return res.status(400).json({ error: "sku and name are required" });
@@ -211,7 +505,7 @@ app.post("/items", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), async
   res.status(201).json(result.rows[0]);
 }));
 
-app.put("/items/:id", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.put("/items/:id", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { sku, name, description, unit, barcode, is_active } = req.body;
   const result = await pool.query(
@@ -232,7 +526,7 @@ app.put("/items/:id", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), as
   res.json(result.rows[0]);
 }));
 
-app.post("/items/:id/deactivate", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(async (req, res) => {
+app.post("/items/:id/deactivate", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const result = await pool.query(
     `UPDATE items SET is_active = FALSE WHERE id = $1 RETURNING id, sku, name, is_active`,
@@ -244,12 +538,12 @@ app.post("/items/:id/deactivate", authenticateToken, authorizeRoles("ADMIN"), as
   res.json(result.rows[0]);
 }));
 
-app.get("/warehouses", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/warehouses", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
   const result = await pool.query("SELECT id, code, name, address FROM warehouses ORDER BY id");
   res.json(result.rows);
 }));
 
-app.post("/warehouses", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(async (req, res) => {
+app.post("/warehouses", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
   const { code, name, address } = req.body;
   if (!code || !name) {
     return res.status(400).json({ error: "code and name are required" });
@@ -263,7 +557,7 @@ app.post("/warehouses", authenticateToken, authorizeRoles("ADMIN"), asyncHandler
   res.status(201).json(result.rows[0]);
 }));
 
-app.get("/warehouses/:warehouseId/locations", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/warehouses/:warehouseId/locations", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
   const { warehouseId } = req.params;
   const result = await pool.query(
     `SELECT id, warehouse_id, code, type, capacity
@@ -275,7 +569,7 @@ app.get("/warehouses/:warehouseId/locations", authenticateToken, asyncHandler(as
   res.json(result.rows);
 }));
 
-app.post("/locations", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(async (req, res) => {
+app.post("/locations", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
   const { warehouse_id, code, type, capacity } = req.body;
   if (!warehouse_id || !code || !type) {
     return res.status(400).json({ error: "warehouse_id, code and type are required" });
@@ -289,7 +583,7 @@ app.post("/locations", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(
   res.status(201).json(result.rows[0]);
 }));
 
-app.post("/inbound-orders", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/inbound-orders", authenticateToken, authorizePermissions("CAN_CREATE_INBOUND_ORDER"), asyncHandler(async (req, res) => {
   const { reference, supplier_name, warehouse_id, expected_date, lines } = req.body;
   if (!reference || !warehouse_id || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "reference, warehouse_id and at least one line are required" });
@@ -335,7 +629,7 @@ app.get("/inbound-orders", authenticateToken, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.post("/inbound-orders/:id/receive", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/inbound-orders/:id/receive", authenticateToken, authorizePermissions("CAN_RECEIVE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { receipts } = req.body;
   if (!Array.isArray(receipts) || receipts.length === 0) {
@@ -429,7 +723,7 @@ app.get("/stock", authenticateToken, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.post("/movements", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/movements", authenticateToken, authorizePermissions("CAN_MOVE_STOCK"), asyncHandler(async (req, res) => {
   const { item_id, from_location_id, to_location_id, quantity, movement_type = "MOVE" } = req.body;
   if (!item_id || !to_location_id || !quantity) {
     return res.status(400).json({ error: "item_id, to_location_id and quantity are required" });
@@ -469,7 +763,7 @@ app.get("/movements", authenticateToken, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.post("/outbound-orders", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/outbound-orders", authenticateToken, authorizePermissions("CAN_PICK"), asyncHandler(async (req, res) => {
   const { reference, customer_name, warehouse_id, shipping_date, lines } = req.body;
   if (!reference || !warehouse_id || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "reference, warehouse_id and at least one line are required" });
@@ -514,7 +808,7 @@ app.get("/outbound-orders", authenticateToken, asyncHandler(async (req, res) => 
   res.json(result.rows);
 }));
 
-app.post("/outbound-orders/:id/pick", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/outbound-orders/:id/pick", authenticateToken, authorizePermissions("CAN_PICK"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { picks } = req.body;
   if (!Array.isArray(picks) || picks.length === 0) {
@@ -601,7 +895,7 @@ app.get("/inventory-counts", authenticateToken, asyncHandler(async (req, res) =>
   res.json(result.rows);
 }));
 
-app.post("/inventory-counts", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/inventory-counts", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
   const { warehouse_id } = req.body;
   if (!warehouse_id) {
     return res.status(400).json({ error: "warehouse_id is required" });
@@ -615,7 +909,7 @@ app.post("/inventory-counts", authenticateToken, authorizeRoles("ADMIN", "OPERAT
   res.status(201).json(result.rows[0]);
 }));
 
-app.post("/inventory-counts/:id/lines", authenticateToken, authorizeRoles("ADMIN", "OPERATOR"), asyncHandler(async (req, res) => {
+app.post("/inventory-counts/:id/lines", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { lines } = req.body;
   if (!Array.isArray(lines) || lines.length === 0) {
@@ -646,7 +940,7 @@ app.post("/inventory-counts/:id/lines", authenticateToken, authorizeRoles("ADMIN
   res.json({ message: "Inventory lines recorded" });
 }));
 
-app.post("/inventory-counts/:id/close", authenticateToken, authorizeRoles("ADMIN"), asyncHandler(async (req, res) => {
+app.post("/inventory-counts/:id/close", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   await pool.query(
     `UPDATE inventory_counts SET status = 'CLOSED', closed_at = NOW() WHERE id = $1`,
@@ -655,7 +949,350 @@ app.post("/inventory-counts/:id/close", authenticateToken, authorizeRoles("ADMIN
   res.json({ message: "Inventory closed" });
 }));
 
-app.get("/reports/stock-by-item", authenticateToken, asyncHandler(async (req, res) => {
+app.post("/inventory/cycle-count", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
+  const { warehouse_id = null, strategy = "ABC", limit = 10 } = req.body || {};
+  const baseQuery = `SELECT l.id, l.code, l.type, l.warehouse_id, COALESCE(SUM(s.quantity), 0) AS quantity
+                     FROM locations l
+                     LEFT JOIN stock s ON s.location_id = l.id
+                     WHERE ($1::INT IS NULL OR l.warehouse_id = $1)
+                     GROUP BY l.id, l.code, l.type, l.warehouse_id`;
+  const orderClause = strategy === "ROTATION"
+    ? " ORDER BY quantity DESC"
+    : strategy === "ANOMALY"
+    ? " ORDER BY RANDOM()"
+    : " ORDER BY l.code";
+  const locations = await pool.query(baseQuery + orderClause + " LIMIT $2", [warehouse_id, limit]);
+  const locationList = locations.rows;
+
+  await withTransaction(async (client) => {
+    for (const location of locationList) {
+      await client.query(
+        `INSERT INTO tasks (type, priority, metadata, auto_generated)
+         VALUES ('CYCLE_COUNT', 'HIGH', $1, TRUE)`,
+        [JSON.stringify({ location_id: location.id, warehouse_id: location.warehouse_id })]
+      );
+    }
+    await client.query(
+      `INSERT INTO cycle_count_runs (warehouse_id, strategy, locations)
+       VALUES ($1, $2, $3)`,
+      [warehouse_id, strategy, JSON.stringify(locationList)]
+    );
+  });
+
+  res.json({ locations: locationList });
+}));
+
+app.get("/tasks", authenticateToken, authorizePermissions("CAN_VIEW_TASKS"), asyncHandler(async (req, res) => {
+  const { status, type } = req.query;
+  const conditions = [];
+  const values = [];
+  if (status) {
+    conditions.push(`t.status = $${conditions.length + 1}`);
+    values.push(status.toUpperCase());
+  }
+  if (type) {
+    conditions.push(`t.type = $${conditions.length + 1}`);
+    values.push(type.toUpperCase());
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const result = await pool.query(
+    `SELECT t.*, u.username AS assigned_username
+     FROM tasks t
+     LEFT JOIN users u ON u.id = t.assigned_to
+     ${where}
+     ORDER BY t.created_at DESC
+     LIMIT 200`,
+    values
+  );
+  res.json(result.rows);
+}));
+
+app.post("/tasks", authenticateToken, authorizePermissions("CAN_MANAGE_TASKS"), asyncHandler(async (req, res) => {
+  const { type, priority = "MEDIUM", assigned_to = null, metadata = {}, auto_generated = false, due_at = null } = req.body || {};
+  if (!type) {
+    return res.status(400).json({ error: "type is required" });
+  }
+  const result = await pool.query(
+    `INSERT INTO tasks (type, priority, assigned_to, metadata, auto_generated, due_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [type.toUpperCase(), priority, assigned_to, JSON.stringify(metadata), auto_generated, due_at]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.patch("/tasks/:id", authenticateToken, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const existing = await pool.query(`SELECT * FROM tasks WHERE id = $1`, [id]);
+  if (existing.rowCount === 0) {
+    return res.status(404).json({ error: "Task not found" });
+  }
+  const task = existing.rows[0];
+  const canManage = userHasPermission(req.user, "CAN_MANAGE_TASKS");
+  const canExecute = userHasPermission(req.user, "CAN_EXECUTE_TASKS");
+  if (!canManage) {
+    const isOwner = task.assigned_to === req.user.id || task.assigned_to === null;
+    if (!isOwner) {
+      return res.status(403).json({ error: "Cannot update this task" });
+    }
+  }
+
+  const { status, assigned_to, metadata } = req.body || {};
+  const updates = [];
+  const values = [];
+  if (status) {
+    updates.push(`status = $${updates.length + 1}`);
+    values.push(status.toUpperCase());
+  }
+  if (assigned_to !== undefined) {
+    const wantsSelfAssignment = !task.assigned_to && assigned_to === req.user.id && canExecute;
+    if (!canManage && !wantsSelfAssignment) {
+      return res.status(403).json({ error: "Assignment requires CAN_MANAGE_TASKS" });
+    }
+    updates.push(`assigned_to = $${updates.length + 1}`);
+    values.push(assigned_to || null);
+  }
+  if (metadata) {
+    updates.push(`metadata = $${updates.length + 1}`);
+    values.push(JSON.stringify(metadata));
+  }
+  if (!updates.length) {
+    return res.status(400).json({ error: "No update supplied" });
+  }
+  values.push(id);
+  const result = await pool.query(
+    `UPDATE tasks SET ${updates.join(", ")} WHERE id = $${values.length} RETURNING *`,
+    values
+  );
+  res.json(result.rows[0]);
+}));
+
+app.post("/tasks/auto/replenishments", authenticateToken, authorizePermissions("CAN_MANAGE_TASKS"), asyncHandler(async (req, res) => {
+  const thresholdRows = await pool.query(
+    `SELECT lt.location_id, lt.min_qty, lt.max_qty, l.code, w.name AS warehouse_name,
+            COALESCE(SUM(s.quantity), 0) AS quantity
+     FROM location_thresholds lt
+     JOIN locations l ON l.id = lt.location_id
+     JOIN warehouses w ON w.id = l.warehouse_id
+     LEFT JOIN stock s ON s.location_id = lt.location_id
+     GROUP BY lt.location_id, lt.min_qty, lt.max_qty, l.code, w.name
+     HAVING COALESCE(SUM(s.quantity), 0) < lt.min_qty`
+  );
+  const created = [];
+  await withTransaction(async (client) => {
+    for (const row of thresholdRows.rows) {
+      const open = await client.query(
+        `SELECT 1 FROM tasks
+         WHERE type = 'REPLENISHMENT'
+           AND status IN ('PENDING', 'IN_PROGRESS')
+           AND metadata ->> 'location_id' = $1::text
+         LIMIT 1`,
+        [String(row.location_id)]
+      );
+      if (open.rowCount > 0) {
+        continue;
+      }
+      const taskResult = await client.query(
+        `INSERT INTO tasks (type, priority, metadata, auto_generated)
+         VALUES ('REPLENISHMENT', 'HIGH', $1, TRUE)
+         RETURNING *`,
+        [
+          JSON.stringify({
+            location_id: row.location_id,
+            location_code: row.code,
+            warehouse: row.warehouse_name,
+            current_qty: Number(row.quantity),
+            min_qty: Number(row.min_qty),
+            max_qty: row.max_qty ? Number(row.max_qty) : null
+          })
+        ]
+      );
+      created.push(taskResult.rows[0]);
+    }
+  });
+  res.json({ created });
+}));
+
+app.get("/rules/putaway", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
+  const result = await pool.query(`SELECT * FROM putaway_rules ORDER BY active DESC, priority DESC, name`);
+  res.json(result.rows);
+}));
+
+app.post("/rules/putaway", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
+  const { name, strategy, criteria, destination, priority = 0, active = true } = req.body || {};
+  if (!name || !strategy || !criteria || !destination) {
+    return res.status(400).json({ error: "name, strategy, criteria and destination are required" });
+  }
+  const result = await pool.query(
+    `INSERT INTO putaway_rules (name, strategy, criteria, destination, priority, active)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [name, strategy, JSON.stringify(criteria), JSON.stringify(destination), priority, active]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.get("/rules/picking", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
+  const result = await pool.query(`SELECT * FROM picking_rules ORDER BY active DESC, priority DESC, name`);
+  res.json(result.rows);
+}));
+
+app.post("/rules/picking", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
+  const { name, grouping, heuristics, priority = 0, active = true } = req.body || {};
+  if (!name || !grouping || !heuristics) {
+    return res.status(400).json({ error: "name, grouping and heuristics are required" });
+  }
+  const result = await pool.query(
+    `INSERT INTO picking_rules (name, grouping, heuristics, priority, active)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [name, grouping, JSON.stringify(heuristics), priority, active]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.post("/picking/smart-plan", authenticateToken, authorizePermissions("CAN_PICK"), asyncHandler(async (req, res) => {
+  const { warehouse_id = null, lines = [] } = req.body || {};
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return res.status(400).json({ error: "lines array is required" });
+  }
+  const itemIds = [...new Set(lines.map((line) => Number(line.item_id))).values()].filter(Boolean);
+  const stockRows = await pool.query(
+    `SELECT s.item_id, l.id AS location_id, l.code, l.type,
+            COALESCE(SUM(s.quantity), 0) AS quantity
+     FROM locations l
+     LEFT JOIN stock s ON s.location_id = l.id AND s.item_id = ANY($1::INT[])
+     WHERE ($2::INT IS NULL OR l.warehouse_id = $2)
+     GROUP BY s.item_id, l.id, l.code, l.type
+     HAVING COALESCE(SUM(s.quantity), 0) > 0
+     ORDER BY l.code`,
+    [itemIds.length ? itemIds : [0], warehouse_id]
+  );
+  const plan = lines.map((line) => {
+    const matches = stockRows.rows.filter((row) => row.item_id === Number(line.item_id));
+    let remaining = Number(line.quantity || line.ordered_qty || 0);
+    const steps = [];
+    matches.forEach((row, index) => {
+      if (remaining <= 0) return;
+      const pickQty = Math.min(remaining, Number(row.quantity));
+      remaining -= pickQty;
+      steps.push({
+        location_id: row.location_id,
+        location_code: row.code,
+        quantity: pickQty,
+        distance_score: index + 1
+      });
+    });
+    return {
+      line_id: line.id || null,
+      item_id: line.item_id,
+      requested_qty: Number(line.quantity || line.ordered_qty || 0),
+      steps,
+      shortage: remaining > 0 ? remaining : 0
+    };
+  });
+  res.json({ plan });
+}));
+
+app.post("/putaway/suggestions", authenticateToken, authorizePermissions("CAN_RECEIVE"), asyncHandler(async (req, res) => {
+  const { attributes = {} } = req.body || {};
+  const result = await pool.query(`SELECT * FROM putaway_rules WHERE active = TRUE ORDER BY priority DESC, created_at DESC`);
+  let matched = null;
+  for (const rule of result.rows) {
+    const criteria = rule.criteria || {};
+    const match = Object.entries(criteria).every(([key, value]) => attributes[key] === value);
+    if (match) {
+      matched = rule;
+      break;
+    }
+  }
+  res.json({
+    rule: matched,
+    suggestion: matched ? matched.destination : { zone: "RECEIVING", rationale: "Pas de règle dédiée" }
+  });
+}));
+
+app.get("/warehouse-map", authenticateToken, authorizePermissions("CAN_VIEW_HEATMAP"), asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `WITH stock_totals AS (
+        SELECT location_id, SUM(quantity) AS quantity
+        FROM stock
+        GROUP BY location_id
+     )
+     SELECT w.id AS warehouse_id, w.name,
+            json_agg(json_build_object(
+              'id', l.id,
+              'code', l.code,
+              'type', l.type,
+              'capacity', l.capacity,
+              'quantity', COALESCE(st.quantity, 0)
+            ) ORDER BY l.code) AS locations
+     FROM warehouses w
+     JOIN locations l ON l.warehouse_id = w.id
+     LEFT JOIN stock_totals st ON st.location_id = l.id
+     GROUP BY w.id, w.name
+     ORDER BY w.name`
+  );
+  res.json(result.rows);
+}));
+
+app.get("/quality/inspections", authenticateToken, authorizePermissions("CAN_MANAGE_QUALITY"), asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT qi.*, io.reference AS inbound_reference
+     FROM quality_inspections qi
+     LEFT JOIN inbound_orders io ON io.id = qi.inbound_order_id
+     ORDER BY qi.created_at DESC`
+  );
+  res.json(result.rows);
+}));
+
+app.post("/quality/inspections", authenticateToken, authorizePermissions("CAN_MANAGE_QUALITY"), asyncHandler(async (req, res) => {
+  const { inbound_order_id = null, stock_id = null, notes = null } = req.body || {};
+  const result = await pool.query(
+    `INSERT INTO quality_inspections (inbound_order_id, stock_id, notes)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [inbound_order_id, stock_id, notes]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.patch("/quality/inspections/:id", authenticateToken, authorizePermissions("CAN_MANAGE_QUALITY"), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { status, notes } = req.body || {};
+  if (!status && !notes) {
+    return res.status(400).json({ error: "No updates" });
+  }
+  const updates = [];
+  const values = [];
+  if (status) {
+    updates.push(`status = $${updates.length + 1}`);
+    values.push(status);
+    if (["OK", "RELEASED"].includes(status.toUpperCase())) {
+      updates.push(`resolved_at = NOW()`);
+    }
+  }
+  if (notes) {
+    updates.push(`notes = $${updates.length + 1}`);
+    values.push(notes);
+  }
+  values.push(id);
+  const result = await pool.query(
+    `UPDATE quality_inspections SET ${updates.join(", ")} WHERE id = $${values.length} RETURNING *`,
+    values
+  );
+  res.json(result.rows[0]);
+}));
+
+app.get("/reports/operator-activity", authenticateToken, authorizePermissions("CAN_VIEW_REPORTING"), asyncHandler(async (req, res) => {
+  const [taskSummary, movementSummary] = await Promise.all([
+    pool.query(`SELECT status, COUNT(*) FROM tasks GROUP BY status`),
+    pool.query(`SELECT movement_type, COUNT(*) FROM movements WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY movement_type`)
+  ]);
+  res.json({ tasks: taskSummary.rows, movements: movementSummary.rows });
+}));
+
+app.get("/reports/stock-by-item", authenticateToken, authorizePermissions("CAN_VIEW_REPORTING"), asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT i.id, i.sku, i.name, SUM(s.quantity) AS total_quantity
      FROM items i
@@ -695,6 +1332,13 @@ app.use((err, req, res, next) => {
 });
 
 const port = Number(process.env.PORT) || 3000;
-app.listen(port, () => {
-  console.log(`WMS app running on port ${port}`);
-});
+bootstrap()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`WMS app running on port ${port}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Unable to bootstrap automation layer", err);
+    process.exit(1);
+  });
