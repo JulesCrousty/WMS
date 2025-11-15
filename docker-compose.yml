@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: wms-db
+    environment:
+      POSTGRES_DB: wms
+      POSTGRES_USER: wms_user
+      POSTGRES_PASSWORD: wms_password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+
+  web:
+    build: .
+    container_name: wms-web
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: wms
+      DB_USER: wms_user
+      DB_PASSWORD: wms_password
+      JWT_SECRET: super-secret-change-me
+    ports:
+      - "8080:3000"
+
+volumes:
+  db_data:
