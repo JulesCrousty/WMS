@@ -84,16 +84,21 @@ function hasPermission(permission) {
   return state.user?.permissions?.includes(permission);
 }
 
+const ADMIN_ROLES = ["ADMIN_SYSTEME"];
+const OPERATOR_ROLES = ["ADMIN_SYSTEME", "RESP_LOGISTIQUE", "OPERATEUR_ENTREPOT"];
+const READ_ONLY_ROLES = ["VIEWER_GLOBAL"];
+
 function isAdmin() {
-  return state.user?.role === "ADMIN";
+  return state.user ? ADMIN_ROLES.includes(state.user.role) : false;
 }
 
 function canOperate() {
-  return state.user && ["ADMIN", "OPERATOR"].includes(state.user.role);
+  return state.user ? OPERATOR_ROLES.includes(state.user.role) : false;
 }
 
 function canEditItems() {
-  return state.user && state.user.role !== "VIEWER";
+  if (!state.user) return false;
+  return !READ_ONLY_ROLES.includes(state.user.role);
 }
 
 function authHeaders() {
