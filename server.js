@@ -385,6 +385,11 @@ async function getEntryWithLines(entryId) {
 
 async function ensureAutomationTables() {
   await pool.query(
+    `ALTER TABLE users
+       ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`
+  );
+
+  await pool.query(
     `ALTER TABLE stock
        ADD COLUMN IF NOT EXISTS qa_status VARCHAR(20) NOT NULL DEFAULT 'OK'`
   );

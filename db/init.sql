@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS users (
     role            VARCHAR(30) NOT NULL,
     email           VARCHAR(100),
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_login_at   TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS warehouses (
