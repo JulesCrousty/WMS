@@ -11,13 +11,37 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at   TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS wms_sites (
+    id              SERIAL PRIMARY KEY,
+    code            VARCHAR(30) UNIQUE NOT NULL,
+    name            VARCHAR(150) NOT NULL,
+    type            VARCHAR(30) NOT NULL DEFAULT 'HQ',
+    address         TEXT,
+    timezone        VARCHAR(60) NOT NULL DEFAULT 'Europe/Paris',
+    contact_name    VARCHAR(120),
+    contact_email   VARCHAR(120),
+    is_remote       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS wms_site_users (
+    site_id     INT NOT NULL REFERENCES wms_sites(id) ON DELETE CASCADE,
+    user_id     INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    site_role   VARCHAR(30) NOT NULL,
+    PRIMARY KEY (site_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS warehouses (
     id          SERIAL PRIMARY KEY,
     code        VARCHAR(20) UNIQUE NOT NULL,
     name        VARCHAR(100) NOT NULL,
     address     TEXT,
+    site_id     INT REFERENCES wms_sites(id),
     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE warehouses
+    ADD COLUMN IF NOT EXISTS site_id INT REFERENCES wms_sites(id);
 
 CREATE TABLE IF NOT EXISTS locations (
     id              SERIAL PRIMARY KEY,
@@ -374,20 +398,25 @@ ON CONFLICT (username) DO UPDATE SET role = EXCLUDED.role;
 
 INSERT INTO permissions (name, description) VALUES
     ('CAN_MANAGE_USERS', 'Gestion complète des utilisateurs et des rôles'),
-    ('CAN_CREATE_INBOUND_ORDER', 'Créer des ordres entrants'),
-    ('CAN_RECEIVE', 'Effectuer les réceptions et contrôles qualité'),
-    ('CAN_PICK', 'Réaliser les missions de picking'),
-    ('CAN_MOVE_STOCK', 'Déclarer des mouvements internes'),
-    ('CAN_ACCESS_INVENTORY', 'Consulter les stocks et inventaires'),
+    ('WMS_ACCESS', 'Accès au module WMS dans l’ERP'),
+    ('WMS_SITE_MANAGE', 'Administration des sites distants et dépôts'),
+    ('WMS_WAREHOUSE_MANAGE', 'Gestion des entrepôts'),
+    ('WMS_ITEM_VIEW', 'Consultation du référentiel articles'),
+    ('WMS_ITEM_MANAGE', 'Création/édition du référentiel articles'),
+    ('WMS_STOCK_VIEW', 'Consultation des stocks multi-sites'),
+    ('WMS_STOCK_ADJUST', 'Mouvements internes et ajustements'),
+    ('WMS_INBOUND_MANAGE', 'Pilotage des ordres entrants'),
+    ('WMS_INBOUND_RECEIVE', 'Réceptions et contrôles qualité'),
+    ('WMS_TRANSFER_MANAGE', 'Transferts inter-sites et picking'),
+    ('WMS_INVENTORY_MANAGE', 'Création de campagnes d’inventaire'),
+    ('WMS_INVENTORY_COUNT', 'Saisie des comptages inventaires'),
     ('CAN_VIEW_REPORTING', 'Accéder aux tableaux de bord avancés du WMS'),
     ('CAN_MANAGE_RULES', 'Configurer les règles de putaway et de picking'),
-    ('CAN_MANAGE_ITEMS', 'Créer/éditer le catalogue articles'),
     ('CAN_VIEW_TASKS', 'Voir le moteur de tâches'),
     ('CAN_MANAGE_TASKS', 'Créer et assigner des tâches'),
     ('CAN_VIEW_HEATMAP', 'Visualiser la cartographie de l’entrepôt'),
     ('CAN_MANAGE_QUALITY', 'Gérer les contrôles qualité'),
     ('CAN_EXECUTE_TASKS', 'Marquer ses tâches comme réalisées'),
-    ('WMS_ACCESS', 'Accès au module WMS dans l’ERP'),
     ('CORE_SETTINGS', 'Paramétrage global de l’ERP'),
     ('FINANCE_ACCESS', 'Accès au module Finance / Comptabilité'),
     ('FINANCE_VIEW', 'Lecture du plan comptable, journaux et écritures'),
@@ -407,8 +436,11 @@ ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
 
 INSERT INTO roles (name, label, description) VALUES
     ('ADMIN_SYSTEME', 'Administrateur Système', 'Contrôle complet de l’ERP'),
-    ('RESP_LOGISTIQUE', 'Responsable Logistique', 'Pilotage WMS & reporting opérationnel'),
-    ('OPERATEUR_ENTREPOT', 'Opérateur Entrepôt', 'Réception, picking et mouvements'),
+    ('RESP_LOGISTIQUE_SIEGE', 'Responsable Logistique Siège', 'Pilotage WMS & configuration multi-sites'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'Opérateur Entrepôt Siège', 'Opérations siège'),
+    ('RESP_SITE', 'Responsable Site', 'Pilotage d’un site distant'),
+    ('OPERATEUR_SITE', 'Opérateur Site', 'Opérations locales site distant'),
+    ('VIEWER_LOGISTIQUE', 'Viewer Logistique', 'Consultation WMS'),
     ('RESP_FINANCIER', 'Responsable Financier', 'Pilotage comptable et reporting'),
     ('COMPTABLE', 'Comptable', 'Saisie d’écritures et facturation'),
     ('ADMIN_RH', 'Administrateur RH', 'Gestion RH & campagnes de paie'),
@@ -422,28 +454,47 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO role_permissions (role_name, permission_name)
 SELECT role_name, permission_name FROM (VALUES
-    ('RESP_LOGISTIQUE', 'WMS_ACCESS'),
-    ('RESP_LOGISTIQUE', 'CAN_CREATE_INBOUND_ORDER'),
-    ('RESP_LOGISTIQUE', 'CAN_RECEIVE'),
-    ('RESP_LOGISTIQUE', 'CAN_PICK'),
-    ('RESP_LOGISTIQUE', 'CAN_MOVE_STOCK'),
-    ('RESP_LOGISTIQUE', 'CAN_ACCESS_INVENTORY'),
-    ('RESP_LOGISTIQUE', 'CAN_VIEW_REPORTING'),
-    ('RESP_LOGISTIQUE', 'REPORTING_ACCESS'),
-    ('RESP_LOGISTIQUE', 'CAN_MANAGE_RULES'),
-    ('RESP_LOGISTIQUE', 'CAN_MANAGE_ITEMS'),
-    ('RESP_LOGISTIQUE', 'CAN_VIEW_TASKS'),
-    ('RESP_LOGISTIQUE', 'CAN_MANAGE_TASKS'),
-    ('RESP_LOGISTIQUE', 'CAN_VIEW_HEATMAP'),
-    ('RESP_LOGISTIQUE', 'CAN_MANAGE_QUALITY'),
-    ('RESP_LOGISTIQUE', 'CAN_EXECUTE_TASKS'),
-    ('OPERATEUR_ENTREPOT', 'WMS_ACCESS'),
-    ('OPERATEUR_ENTREPOT', 'CAN_RECEIVE'),
-    ('OPERATEUR_ENTREPOT', 'CAN_PICK'),
-    ('OPERATEUR_ENTREPOT', 'CAN_MOVE_STOCK'),
-    ('OPERATEUR_ENTREPOT', 'CAN_ACCESS_INVENTORY'),
-    ('OPERATEUR_ENTREPOT', 'CAN_VIEW_TASKS'),
-    ('OPERATEUR_ENTREPOT', 'CAN_EXECUTE_TASKS'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_ACCESS'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_SITE_MANAGE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_WAREHOUSE_MANAGE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_ITEM_VIEW'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_ITEM_MANAGE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_STOCK_VIEW'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_STOCK_ADJUST'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_INBOUND_MANAGE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_INBOUND_RECEIVE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_TRANSFER_MANAGE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_INVENTORY_MANAGE'),
+    ('RESP_LOGISTIQUE_SIEGE', 'WMS_INVENTORY_COUNT'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_VIEW_REPORTING'),
+    ('RESP_LOGISTIQUE_SIEGE', 'REPORTING_ACCESS'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_MANAGE_RULES'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_VIEW_TASKS'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_MANAGE_TASKS'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_VIEW_HEATMAP'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_MANAGE_QUALITY'),
+    ('RESP_LOGISTIQUE_SIEGE', 'CAN_EXECUTE_TASKS'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'WMS_ACCESS'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'WMS_STOCK_VIEW'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'WMS_STOCK_ADJUST'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'WMS_INBOUND_RECEIVE'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'WMS_TRANSFER_MANAGE'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'WMS_INVENTORY_COUNT'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'CAN_VIEW_TASKS'),
+    ('OPERATEUR_ENTREPOT_SIEGE', 'CAN_EXECUTE_TASKS'),
+    ('RESP_SITE', 'WMS_ACCESS'),
+    ('RESP_SITE', 'WMS_STOCK_VIEW'),
+    ('RESP_SITE', 'WMS_INBOUND_RECEIVE'),
+    ('RESP_SITE', 'WMS_TRANSFER_MANAGE'),
+    ('RESP_SITE', 'WMS_INVENTORY_MANAGE'),
+    ('RESP_SITE', 'WMS_INVENTORY_COUNT'),
+    ('OPERATEUR_SITE', 'WMS_ACCESS'),
+    ('OPERATEUR_SITE', 'WMS_STOCK_VIEW'),
+    ('OPERATEUR_SITE', 'WMS_INBOUND_RECEIVE'),
+    ('OPERATEUR_SITE', 'WMS_INVENTORY_COUNT'),
+    ('VIEWER_LOGISTIQUE', 'WMS_ACCESS'),
+    ('VIEWER_LOGISTIQUE', 'WMS_STOCK_VIEW'),
+    ('VIEWER_LOGISTIQUE', 'CAN_VIEW_REPORTING'),
     ('RESP_FINANCIER', 'FINANCE_ACCESS'),
     ('RESP_FINANCIER', 'FINANCE_VIEW'),
     ('RESP_FINANCIER', 'FINANCE_CONFIGURE'),
@@ -472,7 +523,7 @@ SELECT role_name, permission_name FROM (VALUES
     ('TECHNICIEN_PAIE', 'REPORTING_ACCESS'),
     ('VIEWER_GLOBAL', 'WMS_ACCESS'),
     ('VIEWER_GLOBAL', 'FINANCE_ACCESS'),
-    ('VIEWER_GLOBAL', 'CAN_ACCESS_INVENTORY'),
+    ('VIEWER_GLOBAL', 'WMS_STOCK_VIEW'),
     ('VIEWER_GLOBAL', 'FINANCE_VIEW'),
     ('VIEWER_GLOBAL', 'HR_ACCESS'),
     ('VIEWER_GLOBAL', 'REPORTING_ACCESS'),
@@ -567,9 +618,33 @@ VALUES (
 )
 ON CONFLICT DO NOTHING;
 
+INSERT INTO wms_sites (code, name, type, address, is_remote)
+VALUES
+    ('HQ', 'Siège logistique Orion', 'HQ', 'Parc Supply Chain, Paris', FALSE),
+    ('REMOTE-01', 'Agence Lyon', 'STORE', '17 quai du Rhône, Lyon', TRUE)
+ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name,
+    type = EXCLUDED.type,
+    address = EXCLUDED.address,
+    is_remote = EXCLUDED.is_remote;
+
 INSERT INTO warehouses (code, name, address)
 VALUES ('MAIN', 'Main Warehouse', '123 Supply Chain Ave')
-ON CONFLICT (code) DO NOTHING;
+ON CONFLICT (code) DO UPDATE SET address = EXCLUDED.address;
+
+INSERT INTO warehouses (code, name, address)
+VALUES ('REMOTE-DEPOT', 'Dépôt Agence Lyon', 'Zone Logistique Est, Lyon')
+ON CONFLICT (code) DO UPDATE SET address = EXCLUDED.address;
+
+UPDATE warehouses SET site_id = (SELECT id FROM wms_sites WHERE code = 'HQ') WHERE code = 'MAIN';
+UPDATE warehouses SET site_id = (SELECT id FROM wms_sites WHERE code = 'REMOTE-01') WHERE code = 'REMOTE-DEPOT';
+
+INSERT INTO wms_site_users (site_id, user_id, site_role)
+SELECT s.id, u.id, CASE WHEN s.code = 'HQ' THEN 'RESP_LOGISTIQUE_SIEGE' ELSE 'RESP_SITE' END
+FROM wms_sites s
+CROSS JOIN (SELECT id FROM users WHERE username = 'admin') AS u
+WHERE s.code IN ('HQ', 'REMOTE-01')
+ON CONFLICT DO NOTHING;
 
 INSERT INTO locations (warehouse_id, code, type, capacity)
 SELECT id, 'RECEIVING-01', 'RECEIVING', 100 FROM warehouses WHERE code = 'MAIN'
@@ -577,6 +652,10 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO locations (warehouse_id, code, type, capacity)
 SELECT id, 'PICK-01', 'PICKING', 50 FROM warehouses WHERE code = 'MAIN'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO locations (warehouse_id, code, type, capacity)
+SELECT id, 'REMOTE-BACKROOM', 'STORAGE', 30 FROM warehouses WHERE code = 'REMOTE-DEPOT'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO location_thresholds (location_id, min_qty, max_qty)

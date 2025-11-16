@@ -23,6 +23,17 @@ const state = {
 let viewContainer = null;
 let moduleBadge = null;
 
+function isEntryVisible(entry, user) {
+  if (!entry) return false;
+  if (entry.permissions && entry.permissions.length) {
+    return entry.permissions.some((permission) => user?.permissions?.includes(permission));
+  }
+  if (typeof entry.visibleIf === "function") {
+    return entry.visibleIf(user);
+  }
+  return true;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initUI();
   const session = getStoredSession();
@@ -195,13 +206,19 @@ function renderHub() {
 }
 
 async function renderModuleWorkspace(module, sectionId) {
-  const section = module.navigation.find((entry) => entry.id === sectionId) || module.navigation[0];
+  const rawNavigation = Array.isArray(module.navigation) ? module.navigation : [];
+  const availableNavigation = rawNavigation.filter((entry) => isEntryVisible(entry, state.user));
+  const section = availableNavigation.find((entry) => entry.id === sectionId) || availableNavigation[0];
+  if (!section) {
+    viewContainer.innerHTML = `<p class="empty-state">Aucune section disponible pour votre profil.</p>`;
+    return;
+  }
   viewContainer.innerHTML = `
     <div class="module-shell fade-in">
       <aside class="module-sidebar">
         <h3>${module.label}</h3>
         <ul>
-          ${module.navigation
+          ${availableNavigation
             .map(
               (entry) => `
                 <li>
@@ -230,7 +247,8 @@ async function renderModuleWorkspace(module, sectionId) {
   try {
     const result = await module.render(section.id, {
       user: state.user,
-      rerender: () => renderModuleWorkspace(module, section.id)
+      rerender: () => renderModuleWorkspace(module, section.id),
+      navigation: availableNavigation
     });
     const body = viewContainer.querySelector(".module-content-body");
     const title = viewContainer.querySelector(".module-content-title");

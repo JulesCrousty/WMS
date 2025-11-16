@@ -30,20 +30,25 @@ const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret";
 
 const PERMISSIONS = {
   CAN_MANAGE_USERS: "Gestion des utilisateurs",
-  CAN_CREATE_INBOUND_ORDER: "Création d'ordres entrants",
-  CAN_RECEIVE: "Réceptions et contrôle qualité",
-  CAN_PICK: "Picking",
-  CAN_MOVE_STOCK: "Mouvements internes",
-  CAN_ACCESS_INVENTORY: "Consultation des stocks",
+  WMS_ACCESS: "Accès au module WMS",
+  WMS_SITE_MANAGE: "Gestion des sites, magasins et dépôts",
+  WMS_WAREHOUSE_MANAGE: "Administration des entrepôts",
+  WMS_ITEM_VIEW: "Consultation du référentiel articles",
+  WMS_ITEM_MANAGE: "Gestion du référentiel articles",
+  WMS_STOCK_VIEW: "Accès aux stocks consolidés",
+  WMS_STOCK_ADJUST: "Mouvements internes / ajustements",
+  WMS_INBOUND_MANAGE: "Pilotage des ordres de réception",
+  WMS_INBOUND_RECEIVE: "Exécution des réceptions",
+  WMS_TRANSFER_MANAGE: "Préparations et transferts inter-sites",
+  WMS_INVENTORY_MANAGE: "Création de campagnes d'inventaire",
+  WMS_INVENTORY_COUNT: "Comptages et validations",
   CAN_VIEW_REPORTING: "Reporting avancé WMS",
   CAN_MANAGE_RULES: "Configuration des règles",
-  CAN_MANAGE_ITEMS: "Gestion du catalogue",
   CAN_VIEW_TASKS: "Visualisation des tâches",
   CAN_MANAGE_TASKS: "Pilotage du moteur de tâches",
   CAN_VIEW_HEATMAP: "Cartographie de l'entrepôt",
   CAN_MANAGE_QUALITY: "Gestion qualité",
   CAN_EXECUTE_TASKS: "Exécution de ses tâches",
-  WMS_ACCESS: "Accès au module WMS",
   CORE_SETTINGS: "Paramétrage global de l'ERP",
   FINANCE_ACCESS: "Accès au module Finance",
   FINANCE_VIEW: "Lecture des données comptables",
@@ -68,19 +73,24 @@ const ROLE_DEFINITIONS = {
     label: "Administrateur système",
     permissions: ALL_PERMISSIONS
   },
-  RESP_LOGISTIQUE: {
-    label: "Responsable logistique",
+  RESP_LOGISTIQUE_SIEGE: {
+    label: "Responsable logistique siège",
     permissions: [
       "WMS_ACCESS",
-      "CAN_CREATE_INBOUND_ORDER",
-      "CAN_RECEIVE",
-      "CAN_PICK",
-      "CAN_MOVE_STOCK",
-      "CAN_ACCESS_INVENTORY",
+      "WMS_SITE_MANAGE",
+      "WMS_WAREHOUSE_MANAGE",
+      "WMS_ITEM_VIEW",
+      "WMS_ITEM_MANAGE",
+      "WMS_STOCK_VIEW",
+      "WMS_STOCK_ADJUST",
+      "WMS_INBOUND_MANAGE",
+      "WMS_INBOUND_RECEIVE",
+      "WMS_TRANSFER_MANAGE",
+      "WMS_INVENTORY_MANAGE",
+      "WMS_INVENTORY_COUNT",
       "CAN_VIEW_REPORTING",
       "REPORTING_ACCESS",
       "CAN_MANAGE_RULES",
-      "CAN_MANAGE_ITEMS",
       "CAN_VIEW_TASKS",
       "CAN_MANAGE_TASKS",
       "CAN_VIEW_HEATMAP",
@@ -88,16 +98,45 @@ const ROLE_DEFINITIONS = {
       "CAN_EXECUTE_TASKS"
     ]
   },
-  OPERATEUR_ENTREPOT: {
-    label: "Opérateur entrepôt",
+  OPERATEUR_ENTREPOT_SIEGE: {
+    label: "Opérateur entrepôt siège",
     permissions: [
       "WMS_ACCESS",
-      "CAN_RECEIVE",
-      "CAN_PICK",
-      "CAN_MOVE_STOCK",
-      "CAN_ACCESS_INVENTORY",
+      "WMS_STOCK_VIEW",
+      "WMS_STOCK_ADJUST",
+      "WMS_INBOUND_RECEIVE",
+      "WMS_TRANSFER_MANAGE",
+      "WMS_INVENTORY_COUNT",
       "CAN_VIEW_TASKS",
       "CAN_EXECUTE_TASKS"
+    ]
+  },
+  RESP_SITE: {
+    label: "Responsable site distant",
+    permissions: [
+      "WMS_ACCESS",
+      "WMS_STOCK_VIEW",
+      "WMS_INBOUND_RECEIVE",
+      "WMS_TRANSFER_MANAGE",
+      "WMS_INVENTORY_MANAGE",
+      "WMS_INVENTORY_COUNT"
+    ]
+  },
+  OPERATEUR_SITE: {
+    label: "Opérateur site distant",
+    permissions: [
+      "WMS_ACCESS",
+      "WMS_STOCK_VIEW",
+      "WMS_INBOUND_RECEIVE",
+      "WMS_INVENTORY_COUNT"
+    ]
+  },
+  VIEWER_LOGISTIQUE: {
+    label: "Viewer logistique",
+    permissions: [
+      "WMS_ACCESS",
+      "WMS_STOCK_VIEW",
+      "CAN_VIEW_REPORTING"
     ]
   },
   RESP_FINANCIER: {
@@ -151,7 +190,7 @@ const ROLE_DEFINITIONS = {
     label: "Viewer global",
     permissions: [
       "WMS_ACCESS",
-      "CAN_ACCESS_INVENTORY",
+      "WMS_STOCK_VIEW",
       "FINANCE_ACCESS",
       "FINANCE_VIEW",
       "HR_ACCESS",
@@ -245,7 +284,7 @@ async function changeStock(client, itemId, locationId, delta, { batchNumber = nu
   }
 }
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   if (!authHeader) {
     return res.status(401).json({ error: "Authorization header missing" });
@@ -256,7 +295,11 @@ function authenticateToken(req, res, next) {
   }
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.user = { ...payload, permissions: getPermissionsForRole(payload.role) };
+    const user = await getUserContextById(payload.id);
+    if (!user) {
+      return res.status(401).json({ error: "Utilisateur introuvable" });
+    }
+    req.user = user;
     next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -297,13 +340,93 @@ function authorizePermissions(...permissions) {
   };
 }
 
-function buildUserContext(row) {
+function requirePermission(...permissions) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const granted = permissions.some((permission) => userHasPermission(req.user, permission));
+    if (!granted) {
+      return res.status(403).json({ error: "Missing permissions", details: permissions });
+    }
+    next();
+  };
+}
+
+function buildUserContext(row, sites = []) {
   return {
     id: row.id,
     username: row.username,
     role: row.role,
-    permissions: getPermissionsForRole(row.role)
+    permissions: getPermissionsForRole(row.role),
+    sites
   };
+}
+
+async function fetchUserSites(userId) {
+  const result = await pool.query(
+    `SELECT s.id, s.code, s.name, s.type, s.is_remote, usu.site_role
+       FROM wms_site_users usu
+       JOIN wms_sites s ON s.id = usu.site_id
+      WHERE usu.user_id = $1
+      ORDER BY s.code`,
+    [userId]
+  );
+  return result.rows;
+}
+
+async function buildUserContextAsync(row) {
+  const sites = await fetchUserSites(row.id);
+  return buildUserContext(row, sites);
+}
+
+async function getUserContextById(userId) {
+  const result = await pool.query(
+    `SELECT id, username, role FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (result.rowCount === 0) {
+    return null;
+  }
+  return buildUserContextAsync(result.rows[0]);
+}
+
+function getAccessibleSiteIds(user) {
+  if (userHasPermission(user, "WMS_SITE_MANAGE")) {
+    return null;
+  }
+  const siteIds = (user?.sites || []).map((site) => Number(site.id)).filter(Boolean);
+  return siteIds;
+}
+
+function buildSiteFilterClause({ user, column, values, hasWhere = false }) {
+  const scope = getAccessibleSiteIds(user);
+  if (scope === null) {
+    return { clause: "", values };
+  }
+  if (scope.length === 0) {
+    return { clause: hasWhere ? " AND FALSE" : "WHERE FALSE", values };
+  }
+  values.push(scope);
+  const clause = `${hasWhere ? "AND" : "WHERE"} ${column} = ANY($${values.length})`;
+  return { clause, values };
+}
+
+async function ensureSiteAccess(user, siteId) {
+  const scope = getAccessibleSiteIds(user);
+  const normalized = Number(siteId);
+  if (scope !== null && (scope.length === 0 || !scope.includes(normalized))) {
+    const error = new Error("Site non autorisé");
+    error.statusCode = 403;
+    throw error;
+  }
+  const site = await pool.query(`SELECT id, code, name FROM wms_sites WHERE id = $1`, [normalized]);
+  if (site.rowCount === 0) {
+    const error = new Error("Site introuvable");
+    error.statusCode = 404;
+    throw error;
+  }
+  return site.rows[0];
 }
 
 async function resolveFiscalYearId(client, entryDate, fallbackId = null) {
@@ -592,20 +715,17 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
   }
 
   await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]);
-  const userContext = buildUserContext(user);
+  const userContext = await buildUserContextAsync(user);
   const token = jwt.sign({ id: userContext.id, username: userContext.username, role: userContext.role }, JWT_SECRET, { expiresIn: "8h" });
   res.json({ token, user: userContext });
 }));
 
 app.get("/auth/me", authenticateToken, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    "SELECT id, username, role FROM users WHERE id = $1",
-    [req.user.id]
-  );
-  if (result.rowCount === 0) {
+  const userContext = await getUserContextById(req.user.id);
+  if (!userContext) {
     return res.status(404).json({ error: "Utilisateur introuvable" });
   }
-  res.json(buildUserContext(result.rows[0]));
+  res.json(userContext);
 }));
 
 app.get("/users", authenticateToken, authorizePermissions("CAN_MANAGE_USERS"), asyncHandler(async (req, res) => {
@@ -764,7 +884,239 @@ app.get("/erp/overview", authenticateToken, asyncHandler(async (req, res) => {
   res.json({ generated_at: new Date().toISOString(), modules });
 }));
 
-app.get("/items", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
+app.get("/api/wms/dashboard", authenticateToken, requirePermission("WMS_STOCK_VIEW"), asyncHandler(async (req, res) => {
+  const inboundFilter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
+  const outboundFilter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
+  const stockFilter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: false });
+  const siteBreakdownFilter = buildSiteFilterClause({ user: req.user, column: "s.id", values: [], hasWhere: false });
+  const movementFilter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
+
+  const [openInbounds, openOutbounds, stockQty, pendingTasks, siteBreakdown, dailyFlows] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*)::INT AS count
+         FROM inbound_orders io
+         JOIN warehouses w ON w.id = io.warehouse_id
+        WHERE io.status <> 'CLOSED'
+        ${inboundFilter.clause}`,
+      inboundFilter.values
+    ),
+    pool.query(
+      `SELECT COUNT(*)::INT AS count
+         FROM outbound_orders oo
+         JOIN warehouses w ON w.id = oo.warehouse_id
+        WHERE oo.status <> 'SHIPPED'
+        ${outboundFilter.clause}`,
+      outboundFilter.values
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(s.quantity), 0)::NUMERIC AS total
+         FROM stock s
+         JOIN locations l ON l.id = s.location_id
+         JOIN warehouses w ON w.id = l.warehouse_id
+        ${stockFilter.clause || ''}`,
+      stockFilter.values
+    ),
+    pool.query(`SELECT COUNT(*)::INT AS count FROM tasks WHERE status = 'PENDING'`),
+    pool.query(
+      `SELECT s.id, s.code, s.name, s.type,
+              COUNT(DISTINCT io.id) FILTER (WHERE io.status <> 'CLOSED') AS open_inbounds,
+              COUNT(DISTINCT oo.id) FILTER (WHERE oo.status <> 'SHIPPED') AS open_outbounds,
+              COALESCE(SUM(st.quantity), 0)::NUMERIC AS stock_quantity
+         FROM wms_sites s
+         LEFT JOIN warehouses w ON w.site_id = s.id
+         LEFT JOIN inbound_orders io ON io.warehouse_id = w.id
+         LEFT JOIN outbound_orders oo ON oo.warehouse_id = w.id
+         LEFT JOIN locations l ON l.warehouse_id = w.id
+         LEFT JOIN stock st ON st.location_id = l.id
+        ${siteBreakdownFilter.clause}
+        GROUP BY s.id
+        ORDER BY s.code`,
+      siteBreakdownFilter.values
+    ),
+    pool.query(
+      `SELECT date_trunc('day', m.created_at) AS day,
+              COUNT(*) FILTER (WHERE m.movement_type = 'RECEIPT') AS receipts,
+              COUNT(*) FILTER (WHERE m.movement_type <> 'RECEIPT') AS issues
+         FROM movements m
+         LEFT JOIN locations fl ON fl.id = m.from_location_id
+         LEFT JOIN locations tl ON tl.id = m.to_location_id
+         LEFT JOIN warehouses w ON w.id = COALESCE(fl.warehouse_id, tl.warehouse_id)
+        WHERE m.created_at >= NOW() - INTERVAL '7 days'
+        ${movementFilter.clause}
+        GROUP BY day
+        ORDER BY day`,
+      movementFilter.values
+    )
+  ]);
+
+  res.json({
+    open_inbounds: Number(openInbounds.rows[0]?.count || 0),
+    open_outbounds: Number(openOutbounds.rows[0]?.count || 0),
+    stock_quantity: Number(stockQty.rows[0]?.total || 0),
+    pending_tasks: Number(pendingTasks.rows[0]?.count || 0),
+    site_breakdown: siteBreakdown.rows,
+    daily_flows: dailyFlows.rows
+  });
+}));
+
+app.get("/api/wms/sites", authenticateToken, requirePermission("WMS_STOCK_VIEW", "WMS_SITE_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "s.id", values: [], hasWhere: false });
+  const result = await pool.query(
+    `SELECT s.id, s.code, s.name, s.type, s.address, s.is_remote,
+            COUNT(DISTINCT w.id)::INT AS warehouses,
+            COUNT(DISTINCT io.id) FILTER (WHERE io.status <> 'CLOSED')::INT AS open_inbounds,
+            COUNT(DISTINCT oo.id) FILTER (WHERE oo.status <> 'SHIPPED')::INT AS open_outbounds,
+            COALESCE(SUM(st.quantity), 0)::NUMERIC AS stock_quantity
+       FROM wms_sites s
+       LEFT JOIN warehouses w ON w.site_id = s.id
+       LEFT JOIN inbound_orders io ON io.warehouse_id = w.id
+       LEFT JOIN outbound_orders oo ON oo.warehouse_id = w.id
+       LEFT JOIN locations l ON l.warehouse_id = w.id
+       LEFT JOIN stock st ON st.location_id = l.id
+      ${filter.clause}
+      GROUP BY s.id
+      ORDER BY s.code`,
+    filter.values
+  );
+  res.json(result.rows);
+}));
+
+app.get("/api/wms/sites/:id/dashboard", authenticateToken, requirePermission("WMS_STOCK_VIEW"), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const site = await ensureSiteAccess(req.user, id);
+  const stats = await pool.query(
+    `SELECT COALESCE(SUM(st.quantity), 0)::NUMERIC AS stock_quantity,
+            COUNT(DISTINCT io.id) FILTER (WHERE io.status <> 'CLOSED')::INT AS open_inbounds,
+            COUNT(DISTINCT oo.id) FILTER (WHERE oo.status <> 'SHIPPED')::INT AS open_outbounds,
+            COUNT(DISTINCT ic.id) FILTER (WHERE ic.status <> 'CLOSED')::INT AS open_inventories
+       FROM warehouses w
+       LEFT JOIN locations l ON l.warehouse_id = w.id
+       LEFT JOIN stock st ON st.location_id = l.id
+       LEFT JOIN inbound_orders io ON io.warehouse_id = w.id
+       LEFT JOIN outbound_orders oo ON oo.warehouse_id = w.id
+       LEFT JOIN inventory_counts ic ON ic.warehouse_id = w.id
+      WHERE w.site_id = $1`,
+    [site.id]
+  );
+  const receipts = await pool.query(
+    `SELECT io.id, io.reference, io.supplier_name, io.status, io.expected_date
+       FROM inbound_orders io
+       JOIN warehouses w ON w.id = io.warehouse_id
+      WHERE w.site_id = $1
+      ORDER BY io.expected_date NULLS LAST
+      LIMIT 10`,
+    [site.id]
+  );
+  const inventories = await pool.query(
+    `SELECT ic.id, ic.status, ic.started_at, ic.closed_at, w.name AS warehouse_name
+       FROM inventory_counts ic
+       JOIN warehouses w ON w.id = ic.warehouse_id
+      WHERE w.site_id = $1
+      ORDER BY ic.started_at DESC
+      LIMIT 5`,
+    [site.id]
+  );
+  res.json({
+    site,
+    stats: stats.rows[0] || {},
+    receipts: receipts.rows,
+    inventories: inventories.rows
+  });
+}));
+
+app.get("/api/wms/warehouses", authenticateToken, requirePermission("WMS_STOCK_VIEW", "WMS_WAREHOUSE_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: false });
+  const result = await pool.query(
+    `SELECT w.id, w.code, w.name, w.address, w.site_id, s.name AS site_name,
+            COUNT(DISTINCT l.id)::INT AS locations,
+            COALESCE(SUM(st.quantity), 0)::NUMERIC AS stock_quantity
+       FROM warehouses w
+       LEFT JOIN wms_sites s ON s.id = w.site_id
+       LEFT JOIN locations l ON l.warehouse_id = w.id
+       LEFT JOIN stock st ON st.location_id = l.id
+      ${filter.clause}
+      GROUP BY w.id, s.name
+      ORDER BY w.code`,
+    filter.values
+  );
+  res.json(result.rows);
+}));
+
+app.get("/api/wms/inbound-orders", authenticateToken, requirePermission("WMS_INBOUND_RECEIVE", "WMS_INBOUND_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
+  const result = await pool.query(
+    `SELECT io.id, io.reference, io.supplier_name, io.status, io.expected_date,
+            w.name AS warehouse_name, s.name AS site_name,
+            json_agg(json_build_object('item_id', iol.item_id, 'expected_qty', iol.expected_qty, 'received_qty', iol.received_qty))
+              FILTER (WHERE iol.id IS NOT NULL) AS lines
+       FROM inbound_orders io
+       JOIN warehouses w ON w.id = io.warehouse_id
+       LEFT JOIN wms_sites s ON s.id = w.site_id
+       LEFT JOIN inbound_order_lines iol ON iol.inbound_order_id = io.id
+      WHERE io.status <> 'CLOSED'
+      ${filter.clause}
+      GROUP BY io.id, w.name, s.name
+      ORDER BY io.expected_date NULLS LAST`,
+    filter.values
+  );
+  res.json(result.rows);
+}));
+
+app.get("/api/wms/transfers", authenticateToken, requirePermission("WMS_TRANSFER_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
+  const result = await pool.query(
+    `SELECT oo.id, oo.reference, oo.customer_name, oo.status, oo.shipping_date,
+            w.name AS warehouse_name, s.name AS site_name,
+            COALESCE(SUM(ool.ordered_qty), 0)::NUMERIC AS ordered_qty,
+            COALESCE(SUM(ool.picked_qty), 0)::NUMERIC AS picked_qty
+       FROM outbound_orders oo
+       JOIN warehouses w ON w.id = oo.warehouse_id
+       LEFT JOIN wms_sites s ON s.id = w.site_id
+       LEFT JOIN outbound_order_lines ool ON ool.outbound_order_id = oo.id
+      WHERE oo.status <> 'SHIPPED'
+      ${filter.clause}
+      GROUP BY oo.id, w.name, s.name
+      ORDER BY oo.shipping_date NULLS LAST`,
+    filter.values
+  );
+  res.json(result.rows);
+}));
+
+app.get("/api/wms/inventories", authenticateToken, requirePermission("WMS_INVENTORY_COUNT", "WMS_INVENTORY_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: false });
+  const result = await pool.query(
+    `SELECT ic.id, ic.status, ic.started_at, ic.closed_at,
+            w.name AS warehouse_name, s.name AS site_name
+       FROM inventory_counts ic
+       JOIN warehouses w ON w.id = ic.warehouse_id
+       LEFT JOIN wms_sites s ON s.id = w.site_id
+      ${filter.clause}
+      ORDER BY ic.started_at DESC
+      LIMIT 50`,
+    filter.values
+  );
+  res.json(result.rows);
+}));
+
+app.get("/api/wms/stock/by-item", authenticateToken, requirePermission("WMS_STOCK_VIEW"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
+  const result = await pool.query(
+    `SELECT i.id, i.sku, i.name, i.unit,
+            COALESCE(SUM(st.quantity), 0)::NUMERIC AS quantity
+       FROM items i
+       LEFT JOIN stock st ON st.item_id = i.id
+       LEFT JOIN locations l ON l.id = st.location_id
+       LEFT JOIN warehouses w ON w.id = l.warehouse_id
+      WHERE st.id IS NOT NULL
+      ${filter.clause}
+      GROUP BY i.id
+      ORDER BY i.sku`,
+    filter.values
+  );
+  res.json(result.rows);
+}));
+
+app.get("/items", authenticateToken, requirePermission("WMS_ITEM_VIEW", "WMS_ITEM_MANAGE"), asyncHandler(async (req, res) => {
   const { search } = req.query;
   let query = "SELECT id, sku, name, barcode, unit, is_active FROM items";
   const values = [];
@@ -777,7 +1129,7 @@ app.get("/items", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"
   res.json(result.rows);
 }));
 
-app.post("/items", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), asyncHandler(async (req, res) => {
+app.post("/items", authenticateToken, requirePermission("WMS_ITEM_MANAGE"), asyncHandler(async (req, res) => {
   const { sku, name, description, unit, barcode, is_active } = req.body;
   if (!sku || !name) {
     return res.status(400).json({ error: "sku and name are required" });
@@ -791,7 +1143,7 @@ app.post("/items", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), 
   res.status(201).json(result.rows[0]);
 }));
 
-app.put("/items/:id", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), asyncHandler(async (req, res) => {
+app.put("/items/:id", authenticateToken, requirePermission("WMS_ITEM_MANAGE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { sku, name, description, unit, barcode, is_active } = req.body;
   const result = await pool.query(
@@ -812,7 +1164,7 @@ app.put("/items/:id", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"
   res.json(result.rows[0]);
 }));
 
-app.post("/items/:id/deactivate", authenticateToken, authorizePermissions("CAN_MANAGE_ITEMS"), asyncHandler(async (req, res) => {
+app.post("/items/:id/deactivate", authenticateToken, requirePermission("WMS_ITEM_MANAGE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const result = await pool.query(
     `UPDATE items SET is_active = FALSE WHERE id = $1 RETURNING id, sku, name, is_active`,
@@ -824,41 +1176,71 @@ app.post("/items/:id/deactivate", authenticateToken, authorizePermissions("CAN_M
   res.json(result.rows[0]);
 }));
 
-app.get("/warehouses", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
-  const result = await pool.query("SELECT id, code, name, address FROM warehouses ORDER BY id");
+app.get("/warehouses", authenticateToken, requirePermission("WMS_STOCK_VIEW", "WMS_WAREHOUSE_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: false });
+  const result = await pool.query(
+    `SELECT w.id, w.code, w.name, w.address, w.site_id,
+            COUNT(DISTINCT l.id) AS locations
+       FROM warehouses w
+       LEFT JOIN locations l ON l.warehouse_id = w.id
+      ${filter.clause}
+      GROUP BY w.id
+      ORDER BY w.code`,
+    filter.values
+  );
   res.json(result.rows);
 }));
 
-app.post("/warehouses", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
-  const { code, name, address } = req.body;
+app.post("/warehouses", authenticateToken, requirePermission("WMS_WAREHOUSE_MANAGE"), asyncHandler(async (req, res) => {
+  const { code, name, address, site_id } = req.body;
   if (!code || !name) {
     return res.status(400).json({ error: "code and name are required" });
   }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && site_id && scope.length > 0 && !scope.includes(Number(site_id))) {
+    return res.status(403).json({ error: "Site non autorisé" });
+  }
   const result = await pool.query(
-    `INSERT INTO warehouses (code, name, address)
-     VALUES ($1, $2, $3)
-     RETURNING id, code, name, address`,
-    [code, name, address || null]
+    `INSERT INTO warehouses (code, name, address, site_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, code, name, address, site_id`,
+    [code, name, address || null, site_id || null]
   );
   res.status(201).json(result.rows[0]);
 }));
 
-app.get("/warehouses/:warehouseId/locations", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
+app.get("/warehouses/:warehouseId/locations", authenticateToken, requirePermission("WMS_STOCK_VIEW"), asyncHandler(async (req, res) => {
   const { warehouseId } = req.params;
+  const warehouse = await pool.query("SELECT id, site_id FROM warehouses WHERE id = $1", [warehouseId]);
+  if (warehouse.rowCount === 0) {
+    return res.status(404).json({ error: "Entrepôt introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && warehouse.rows[0].site_id && scope.length > 0 && !scope.includes(Number(warehouse.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
   const result = await pool.query(
     `SELECT id, warehouse_id, code, type, capacity
-     FROM locations
-     WHERE warehouse_id = $1
-     ORDER BY code`,
+       FROM locations
+      WHERE warehouse_id = $1
+      ORDER BY code`,
     [warehouseId]
   );
   res.json(result.rows);
 }));
 
-app.post("/locations", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
+app.post("/locations", authenticateToken, requirePermission("WMS_WAREHOUSE_MANAGE"), asyncHandler(async (req, res) => {
   const { warehouse_id, code, type, capacity } = req.body;
   if (!warehouse_id || !code || !type) {
     return res.status(400).json({ error: "warehouse_id, code and type are required" });
+  }
+  const warehouse = await pool.query("SELECT id, site_id FROM warehouses WHERE id = $1", [warehouse_id]);
+  if (warehouse.rowCount === 0) {
+    return res.status(404).json({ error: "Entrepôt introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && warehouse.rows[0].site_id && scope.length > 0 && !scope.includes(Number(warehouse.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
   }
   const result = await pool.query(
     `INSERT INTO locations (warehouse_id, code, type, capacity)
@@ -869,10 +1251,18 @@ app.post("/locations", authenticateToken, authorizePermissions("CAN_MANAGE_RULES
   res.status(201).json(result.rows[0]);
 }));
 
-app.post("/inbound-orders", authenticateToken, authorizePermissions("CAN_CREATE_INBOUND_ORDER"), asyncHandler(async (req, res) => {
+app.post("/inbound-orders", authenticateToken, requirePermission("WMS_INBOUND_MANAGE"), asyncHandler(async (req, res) => {
   const { reference, supplier_name, warehouse_id, expected_date, lines } = req.body;
   if (!reference || !warehouse_id || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "reference, warehouse_id and at least one line are required" });
+  }
+  const warehouse = await pool.query("SELECT site_id FROM warehouses WHERE id = $1", [warehouse_id]);
+  if (warehouse.rowCount === 0) {
+    return res.status(404).json({ error: "Entrepôt introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && warehouse.rows[0].site_id && scope.length > 0 && !scope.includes(Number(warehouse.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
   }
 
   const created = await withTransaction(async (client) => {
@@ -902,20 +1292,25 @@ app.post("/inbound-orders", authenticateToken, authorizePermissions("CAN_CREATE_
   res.status(201).json(created);
 }));
 
-app.get("/inbound-orders", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/inbound-orders", authenticateToken, requirePermission("WMS_INBOUND_RECEIVE", "WMS_INBOUND_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
   const result = await pool.query(
     `SELECT io.id, io.reference, io.supplier_name, io.warehouse_id, io.status, io.expected_date, io.created_at,
             json_agg(json_build_object('id', iol.id, 'item_id', iol.item_id, 'expected_qty', iol.expected_qty, 'received_qty', iol.received_qty))
             FILTER (WHERE iol.id IS NOT NULL) AS lines
-     FROM inbound_orders io
-     LEFT JOIN inbound_order_lines iol ON io.id = iol.inbound_order_id
-     GROUP BY io.id
-     ORDER BY io.created_at DESC`
+       FROM inbound_orders io
+       JOIN warehouses w ON w.id = io.warehouse_id
+       LEFT JOIN inbound_order_lines iol ON io.id = iol.inbound_order_id
+      WHERE 1=1
+      ${filter.clause}
+      GROUP BY io.id
+      ORDER BY io.created_at DESC`,
+    filter.values
   );
   res.json(result.rows);
 }));
 
-app.post("/inbound-orders/:id/receive", authenticateToken, authorizePermissions("CAN_RECEIVE"), asyncHandler(async (req, res) => {
+app.post("/inbound-orders/:id/receive", authenticateToken, requirePermission("WMS_INBOUND_RECEIVE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { receipts } = req.body;
   if (!Array.isArray(receipts) || receipts.length === 0) {
@@ -923,10 +1318,22 @@ app.post("/inbound-orders/:id/receive", authenticateToken, authorizePermissions(
   }
 
   const result = await withTransaction(async (client) => {
-    const orderResult = await client.query("SELECT id, status FROM inbound_orders WHERE id = $1 FOR UPDATE", [id]);
+    const orderResult = await client.query(
+      `SELECT io.id, io.status, w.site_id
+         FROM inbound_orders io
+         JOIN warehouses w ON w.id = io.warehouse_id
+        WHERE io.id = $1 FOR UPDATE`,
+      [id]
+    );
     const order = orderResult.rows[0];
     if (!order) {
       throw new Error("Inbound order not found");
+    }
+    const scope = getAccessibleSiteIds(req.user);
+    if (scope !== null && order.site_id && scope.length > 0 && !scope.includes(Number(order.site_id))) {
+      const error = new Error("Accès refusé");
+      error.statusCode = 403;
+      throw error;
     }
 
     for (const receipt of receipts) {
@@ -1009,7 +1416,7 @@ app.get("/stock", authenticateToken, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.post("/movements", authenticateToken, authorizePermissions("CAN_MOVE_STOCK"), asyncHandler(async (req, res) => {
+app.post("/movements", authenticateToken, requirePermission("WMS_STOCK_ADJUST"), asyncHandler(async (req, res) => {
   const { item_id, from_location_id, to_location_id, quantity, movement_type = "MOVE" } = req.body;
   if (!item_id || !to_location_id || !quantity) {
     return res.status(400).json({ error: "item_id, to_location_id and quantity are required" });
@@ -1035,7 +1442,7 @@ app.post("/movements", authenticateToken, authorizePermissions("CAN_MOVE_STOCK")
   res.status(201).json(data);
 }));
 
-app.get("/movements", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/movements", authenticateToken, requirePermission("WMS_STOCK_VIEW", "WMS_STOCK_ADJUST"), asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT m.id, m.item_id, i.sku, i.name, m.from_location_id, lf.code AS from_location_code,
             m.to_location_id, lt.code AS to_location_code, m.quantity, m.movement_type, m.user_id, m.created_at
@@ -1049,10 +1456,18 @@ app.get("/movements", authenticateToken, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-app.post("/outbound-orders", authenticateToken, authorizePermissions("CAN_PICK"), asyncHandler(async (req, res) => {
+app.post("/outbound-orders", authenticateToken, requirePermission("WMS_TRANSFER_MANAGE"), asyncHandler(async (req, res) => {
   const { reference, customer_name, warehouse_id, shipping_date, lines } = req.body;
   if (!reference || !warehouse_id || !Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "reference, warehouse_id and at least one line are required" });
+  }
+  const warehouse = await pool.query("SELECT site_id FROM warehouses WHERE id = $1", [warehouse_id]);
+  if (warehouse.rowCount === 0) {
+    return res.status(404).json({ error: "Entrepôt introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && warehouse.rows[0].site_id && scope.length > 0 && !scope.includes(Number(warehouse.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
   }
 
   const order = await withTransaction(async (client) => {
@@ -1081,20 +1496,25 @@ app.post("/outbound-orders", authenticateToken, authorizePermissions("CAN_PICK")
   res.status(201).json(order);
 }));
 
-app.get("/outbound-orders", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/outbound-orders", authenticateToken, requirePermission("WMS_TRANSFER_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
   const result = await pool.query(
     `SELECT oo.id, oo.reference, oo.customer_name, oo.warehouse_id, oo.status, oo.shipping_date, oo.created_at,
             json_agg(json_build_object('id', ool.id, 'item_id', ool.item_id, 'ordered_qty', ool.ordered_qty, 'picked_qty', ool.picked_qty))
             FILTER (WHERE ool.id IS NOT NULL) AS lines
-     FROM outbound_orders oo
-     LEFT JOIN outbound_order_lines ool ON oo.id = ool.outbound_order_id
-     GROUP BY oo.id
-     ORDER BY oo.created_at DESC`
+       FROM outbound_orders oo
+       JOIN warehouses w ON w.id = oo.warehouse_id
+       LEFT JOIN outbound_order_lines ool ON oo.id = ool.outbound_order_id
+      WHERE 1=1
+      ${filter.clause}
+      GROUP BY oo.id
+      ORDER BY oo.created_at DESC`,
+    filter.values
   );
   res.json(result.rows);
 }));
 
-app.post("/outbound-orders/:id/pick", authenticateToken, authorizePermissions("CAN_PICK"), asyncHandler(async (req, res) => {
+app.post("/outbound-orders/:id/pick", authenticateToken, requirePermission("WMS_TRANSFER_MANAGE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { picks } = req.body;
   if (!Array.isArray(picks) || picks.length === 0) {
@@ -1102,9 +1522,21 @@ app.post("/outbound-orders/:id/pick", authenticateToken, authorizePermissions("C
   }
 
   await withTransaction(async (client) => {
-    const order = await client.query("SELECT id, status FROM outbound_orders WHERE id = $1 FOR UPDATE", [id]);
+    const order = await client.query(
+      `SELECT oo.id, oo.status, w.site_id
+         FROM outbound_orders oo
+         JOIN warehouses w ON w.id = oo.warehouse_id
+        WHERE oo.id = $1 FOR UPDATE`,
+      [id]
+    );
     if (!order.rows[0]) {
       throw new Error("Outbound order not found");
+    }
+    const scope = getAccessibleSiteIds(req.user);
+    if (scope !== null && order.rows[0].site_id && scope.length > 0 && !scope.includes(Number(order.rows[0].site_id))) {
+      const error = new Error("Accès refusé");
+      error.statusCode = 403;
+      throw error;
     }
 
     for (const pick of picks) {
@@ -1161,7 +1593,8 @@ app.post("/outbound-orders/:id/pick", authenticateToken, authorizePermissions("C
   res.json({ message: "Picks saved" });
 }));
 
-app.get("/inventory-counts", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/inventory-counts", authenticateToken, requirePermission("WMS_INVENTORY_COUNT", "WMS_INVENTORY_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: false });
   const result = await pool.query(
     `SELECT ic.id, ic.warehouse_id, w.name AS warehouse_name, ic.status, ic.started_at, ic.closed_at,
             COALESCE(json_agg(json_build_object(
@@ -1172,19 +1605,29 @@ app.get("/inventory-counts", authenticateToken, asyncHandler(async (req, res) =>
               'system_qty', icl.system_qty,
               'difference', icl.difference
             ) ORDER BY icl.id) FILTER (WHERE icl.id IS NOT NULL), '[]'::json) AS lines
-     FROM inventory_counts ic
-     LEFT JOIN warehouses w ON w.id = ic.warehouse_id
-     LEFT JOIN inventory_count_lines icl ON icl.inventory_count_id = ic.id
-     GROUP BY ic.id, ic.warehouse_id, ic.status, ic.started_at, ic.closed_at, w.name
-     ORDER BY ic.started_at DESC`
+       FROM inventory_counts ic
+       JOIN warehouses w ON w.id = ic.warehouse_id
+       LEFT JOIN inventory_count_lines icl ON icl.inventory_count_id = ic.id
+      ${filter.clause}
+      GROUP BY ic.id, ic.warehouse_id, ic.status, ic.started_at, ic.closed_at, w.name
+      ORDER BY ic.started_at DESC`,
+    filter.values
   );
   res.json(result.rows);
 }));
 
-app.post("/inventory-counts", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
+app.post("/inventory-counts", authenticateToken, requirePermission("WMS_INVENTORY_MANAGE"), asyncHandler(async (req, res) => {
   const { warehouse_id } = req.body;
   if (!warehouse_id) {
     return res.status(400).json({ error: "warehouse_id is required" });
+  }
+  const warehouse = await pool.query("SELECT site_id FROM warehouses WHERE id = $1", [warehouse_id]);
+  if (warehouse.rowCount === 0) {
+    return res.status(404).json({ error: "Entrepôt introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && warehouse.rows[0].site_id && scope.length > 0 && !scope.includes(Number(warehouse.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
   }
   const result = await pool.query(
     `INSERT INTO inventory_counts (warehouse_id)
@@ -1195,11 +1638,25 @@ app.post("/inventory-counts", authenticateToken, authorizePermissions("CAN_ACCES
   res.status(201).json(result.rows[0]);
 }));
 
-app.post("/inventory-counts/:id/lines", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
+app.post("/inventory-counts/:id/lines", authenticateToken, requirePermission("WMS_INVENTORY_COUNT", "WMS_INVENTORY_MANAGE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { lines } = req.body;
   if (!Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "lines array is required" });
+  }
+  const inventory = await pool.query(
+    `SELECT ic.id, w.site_id
+       FROM inventory_counts ic
+       JOIN warehouses w ON w.id = ic.warehouse_id
+      WHERE ic.id = $1`,
+    [id]
+  );
+  if (inventory.rowCount === 0) {
+    return res.status(404).json({ error: "Inventaire introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && inventory.rows[0].site_id && scope.length > 0 && !scope.includes(Number(inventory.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
   }
 
   await withTransaction(async (client) => {
@@ -1226,8 +1683,22 @@ app.post("/inventory-counts/:id/lines", authenticateToken, authorizePermissions(
   res.json({ message: "Inventory lines recorded" });
 }));
 
-app.post("/inventory-counts/:id/close", authenticateToken, authorizePermissions("CAN_MANAGE_RULES"), asyncHandler(async (req, res) => {
+app.post("/inventory-counts/:id/close", authenticateToken, requirePermission("WMS_INVENTORY_MANAGE"), asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const inventory = await pool.query(
+    `SELECT ic.id, w.site_id
+       FROM inventory_counts ic
+       JOIN warehouses w ON w.id = ic.warehouse_id
+      WHERE ic.id = $1`,
+    [id]
+  );
+  if (inventory.rowCount === 0) {
+    return res.status(404).json({ error: "Inventaire introuvable" });
+  }
+  const scope = getAccessibleSiteIds(req.user);
+  if (scope !== null && inventory.rows[0].site_id && scope.length > 0 && !scope.includes(Number(inventory.rows[0].site_id))) {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
   await pool.query(
     `UPDATE inventory_counts SET status = 'CLOSED', closed_at = NOW() WHERE id = $1`,
     [id]
@@ -1235,8 +1706,18 @@ app.post("/inventory-counts/:id/close", authenticateToken, authorizePermissions(
   res.json({ message: "Inventory closed" });
 }));
 
-app.post("/inventory/cycle-count", authenticateToken, authorizePermissions("CAN_ACCESS_INVENTORY"), asyncHandler(async (req, res) => {
+app.post("/inventory/cycle-count", authenticateToken, requirePermission("WMS_INVENTORY_MANAGE"), asyncHandler(async (req, res) => {
   const { warehouse_id = null, strategy = "ABC", limit = 10 } = req.body || {};
+  if (warehouse_id) {
+    const warehouse = await pool.query("SELECT site_id FROM warehouses WHERE id = $1", [warehouse_id]);
+    if (warehouse.rowCount === 0) {
+      return res.status(404).json({ error: "Entrepôt introuvable" });
+    }
+    const scope = getAccessibleSiteIds(req.user);
+    if (scope !== null && warehouse.rows[0].site_id && scope.length > 0 && !scope.includes(Number(warehouse.rows[0].site_id))) {
+      return res.status(403).json({ error: "Accès refusé" });
+    }
+  }
   const baseQuery = `SELECT l.id, l.code, l.type, l.warehouse_id, COALESCE(SUM(s.quantity), 0) AS quantity
                      FROM locations l
                      LEFT JOIN stock s ON s.location_id = l.id
@@ -1437,7 +1918,7 @@ app.post("/rules/picking", authenticateToken, authorizePermissions("CAN_MANAGE_R
   res.status(201).json(result.rows[0]);
 }));
 
-app.post("/picking/smart-plan", authenticateToken, authorizePermissions("CAN_PICK"), asyncHandler(async (req, res) => {
+app.post("/picking/smart-plan", authenticateToken, requirePermission("WMS_TRANSFER_MANAGE"), asyncHandler(async (req, res) => {
   const { warehouse_id = null, lines = [] } = req.body || {};
   if (!Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: "lines array is required" });
@@ -1480,7 +1961,7 @@ app.post("/picking/smart-plan", authenticateToken, authorizePermissions("CAN_PIC
   res.json({ plan });
 }));
 
-app.post("/putaway/suggestions", authenticateToken, authorizePermissions("CAN_RECEIVE"), asyncHandler(async (req, res) => {
+app.post("/putaway/suggestions", authenticateToken, requirePermission("WMS_INBOUND_RECEIVE"), asyncHandler(async (req, res) => {
   const { attributes = {} } = req.body || {};
   const result = await pool.query(`SELECT * FROM putaway_rules WHERE active = TRUE ORDER BY priority DESC, created_at DESC`);
   let matched = null;
@@ -2122,33 +2603,47 @@ app.get("/reports/operator-activity", authenticateToken, authorizePermissions("C
   res.json({ tasks: taskSummary.rows, movements: movementSummary.rows });
 }));
 
-app.get("/reports/stock-by-item", authenticateToken, authorizePermissions("CAN_VIEW_REPORTING"), asyncHandler(async (req, res) => {
+app.get("/reports/stock-by-item", authenticateToken, requirePermission("WMS_STOCK_VIEW", "CAN_VIEW_REPORTING"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
   const result = await pool.query(
     `SELECT i.id, i.sku, i.name, SUM(s.quantity) AS total_quantity
-     FROM items i
-     LEFT JOIN stock s ON s.item_id = i.id
-     GROUP BY i.id, i.sku, i.name
-     ORDER BY i.sku`
+       FROM items i
+       LEFT JOIN stock s ON s.item_id = i.id
+       LEFT JOIN locations l ON l.id = s.location_id
+       LEFT JOIN warehouses w ON w.id = l.warehouse_id
+      WHERE 1=1
+      ${filter.clause}
+      GROUP BY i.id, i.sku, i.name
+      ORDER BY i.sku`,
+    filter.values
   );
   res.json(result.rows);
 }));
 
-app.get("/reports/pending-inbounds", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/reports/pending-inbounds", authenticateToken, requirePermission("WMS_INBOUND_RECEIVE", "WMS_INBOUND_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
   const result = await pool.query(
-    `SELECT id, reference, supplier_name, expected_date, status
-     FROM inbound_orders
-     WHERE status <> 'CLOSED'
-     ORDER BY expected_date NULLS LAST`
+    `SELECT io.id, io.reference, io.supplier_name, io.expected_date, io.status, w.name AS warehouse_name
+       FROM inbound_orders io
+       JOIN warehouses w ON w.id = io.warehouse_id
+      WHERE io.status <> 'CLOSED'
+      ${filter.clause}
+      ORDER BY io.expected_date NULLS LAST`,
+    filter.values
   );
   res.json(result.rows);
 }));
 
-app.get("/reports/open-outbounds", authenticateToken, asyncHandler(async (req, res) => {
+app.get("/reports/open-outbounds", authenticateToken, requirePermission("WMS_TRANSFER_MANAGE"), asyncHandler(async (req, res) => {
+  const filter = buildSiteFilterClause({ user: req.user, column: "w.site_id", values: [], hasWhere: true });
   const result = await pool.query(
-    `SELECT id, reference, customer_name, status, shipping_date
-     FROM outbound_orders
-     WHERE status <> 'SHIPPED'
-     ORDER BY shipping_date NULLS LAST`
+    `SELECT oo.id, oo.reference, oo.customer_name, oo.status, oo.shipping_date, w.name AS warehouse_name
+       FROM outbound_orders oo
+       JOIN warehouses w ON w.id = oo.warehouse_id
+      WHERE oo.status <> 'SHIPPED'
+      ${filter.clause}
+      ORDER BY oo.shipping_date NULLS LAST`,
+    filter.values
   );
   res.json(result.rows);
 }));
