@@ -14,6 +14,10 @@ const publicDir = path.join(__dirname, "public");
 
 app.use(express.static(publicDir));
 
+const landingEntry = path.join(publicDir, "index.html");
+const portalEntry = path.join(publicDir, "portal", "index.html");
+const appEntry = path.join(publicDir, "app", "index.html");
+
 const pool = new Pool({
   host: process.env.DB_HOST || "localhost",
   port: Number(process.env.DB_PORT) || 5432,
@@ -559,7 +563,15 @@ app.get("/health", asyncHandler(async (req, res) => {
 }));
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
+  res.sendFile(landingEntry);
+});
+
+app.get(["/portal", "/portal/", "/portal/login"], (req, res) => {
+  res.sendFile(portalEntry);
+});
+
+app.get(["/app", "/app/", "/app/login", "/app/dashboard"], (req, res) => {
+  res.sendFile(appEntry);
 });
 
 app.post("/auth/login", asyncHandler(async (req, res) => {

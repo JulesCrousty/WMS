@@ -1,5 +1,5 @@
 import { initRouter, navigateTo } from "./router.js";
-import { login, logout, getStoredSession, saveSession, fetchCurrentUser } from "./auth.js";
+import { logout, getStoredSession, saveSession, fetchCurrentUser } from "./auth.js";
 import { initUI, showToast, applyTransition } from "./ui.js";
 import { getAccessibleModules, getModuleDefinition, canAccessModule } from "./permissions.js";
 import { wmsModule } from "./module-wms.js";
@@ -26,16 +26,15 @@ let moduleBadge = null;
 document.addEventListener("DOMContentLoaded", () => {
   initUI();
   const session = getStoredSession();
-  if (session?.token && session?.user) {
-    state.user = session.user;
-    state.token = session.token;
-    renderShell();
-    bootstrapRouter();
-    navigateTo("/hub");
-    refreshCurrentUser();
-  } else {
-    renderLogin();
+  if (!session?.token || !session?.user) {
+    redirectToPortal();
+    return;
   }
+  state.user = session.user;
+  state.token = session.token;
+  renderShell();
+  bootstrapRouter();
+  refreshCurrentUser();
 });
 
 function bootstrapRouter() {
@@ -55,51 +54,6 @@ async function refreshCurrentUser() {
   } catch (error) {
     handleLogout();
   }
-}
-
-function renderLogin(message = "") {
-  const appRoot = document.getElementById("app");
-  appRoot.innerHTML = `
-    <div class="view-container">
-      <div class="login-wrapper fade-in">
-        <h1>ERP unifié</h1>
-        <p>Connectez-vous pour accéder aux modules Logistique, RH et Paie.</p>
-        <form id="login-form">
-          <div class="form-group">
-            <label>Identifiant</label>
-            <input name="username" autocomplete="username" required />
-          </div>
-          <div class="form-group">
-            <label>Mot de passe</label>
-            <input name="password" type="password" autocomplete="current-password" required />
-          </div>
-          ${message ? `<p class="badge danger">${message}</p>` : ""}
-          <button class="primary" type="submit">Connexion</button>
-        </form>
-      </div>
-    </div>
-  `;
-  const form = document.getElementById("login-form");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    form.querySelector("button").disabled = true;
-    const data = new FormData(form);
-    try {
-      const session = await login(data.get("username"), data.get("password"));
-      state.token = session.token;
-      state.user = session.user;
-      saveSession(session);
-      renderShell();
-      bootstrapRouter();
-      navigateTo("/hub");
-      showToast("success", "Bienvenue dans l'ERP !");
-    } catch (error) {
-      showToast("error", error.message);
-      renderLogin(error.message);
-    } finally {
-      form.querySelector("button").disabled = false;
-    }
-  });
 }
 
 function renderShell() {
@@ -157,16 +111,12 @@ function handleLogout() {
   logout();
   state.user = null;
   state.token = null;
-  renderLogin();
-  navigateTo("/login");
+  redirectToPortal();
 }
 
 function handleRouteChange(route) {
   if (!state.user) {
-    renderLogin();
-    if (route.type !== "login") {
-      navigateTo("/login");
-    }
+    redirectToPortal();
     return;
   }
   if (!viewContainer) {
@@ -189,11 +139,11 @@ function handleRouteChange(route) {
     renderModuleWorkspace(module, section);
     return;
   }
-  if (route.type === "login") {
-    handleLogout();
-    return;
-  }
   navigateTo("/hub");
+}
+
+function redirectToPortal() {
+  window.location.href = "/portal/";
 }
 
 function updateBadge(label, accent) {

@@ -3,16 +3,215 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ERP · Logistique · RH · Paie</title>
+    <title>Orion ERP · Suite unifiée Finance · RH · Logistique</title>
     <link rel="stylesheet" href="/css/styles.css" />
   </head>
-  <body>
-    <noscript>
-      <div class="noscript">
-        Cette application nécessite JavaScript pour fonctionner. Merci d'activer l'exécution des scripts dans votre navigateur.
+  <body class="landing-body">
+    <header class="site-header" data-elevate>
+      <div class="logo-orion">
+        <img src="/img/orion-logo.svg" alt="Logo Orion ERP" width="48" height="48" />
+        <div class="logo-text">
+          <span class="logo-orion-main">Orion</span>
+          <span class="logo-orion-sub">ERP</span>
+        </div>
       </div>
-    </noscript>
-    <div id="app"></div>
-    <script type="module" src="/js/main.js"></script>
+      <nav class="site-nav">
+        <a href="#features">Fonctionnalités</a>
+        <a href="#modules">Modules</a>
+        <a href="#contact">Contact</a>
+      </nav>
+      <a class="btn-outline" href="/portal/">Portail entreprise</a>
+    </header>
+
+    <main>
+      <section class="hero" id="top">
+        <div class="hero-text" data-animate>
+          <p class="eyebrow">Suite Orion · Finance · RH · Logistique</p>
+          <h1>Orion ERP – pilote tes opérations avec la précision d'une constellation.</h1>
+          <p class="lead">
+            Vise la visibilité totale sur tes flux Paie, RH et WMS grâce à un socle unifié, sécurisé et pensé pour la prise de décision.
+          </p>
+          <div class="hero-actions">
+            <a class="btn-primary" href="#contact">Demander une démo</a>
+            <a class="btn-secondary" href="/portal/">Portail entreprise</a>
+          </div>
+        </div>
+        <div class="hero-visual" data-animate>
+          <div class="mockup-window">
+            <div class="mockup-header">
+              <span></span><span></span><span></span>
+              <strong>Orion cockpit</strong>
+            </div>
+            <div class="mockup-content">
+              <div class="mockup-sidebar">
+                <div class="mockup-logo">
+                  <img src="/img/orion-logo.svg" alt="Icône Orion" />
+                  <span>Hub</span>
+                </div>
+                <ul>
+                  <li>Tableau de bord</li>
+                  <li>Logistique</li>
+                  <li>RH</li>
+                  <li>Paie</li>
+                </ul>
+              </div>
+              <div class="mockup-main">
+                <div class="mockup-kpis">
+                  <article>
+                    <span>Réceptions du jour</span>
+                    <strong>128</strong>
+                    <small>+12%</small>
+                  </article>
+                  <article>
+                    <span>Bulletins en brouillon</span>
+                    <strong>32</strong>
+                    <small>Statut OK</small>
+                  </article>
+                  <article>
+                    <span>Demandes RH</span>
+                    <strong>18</strong>
+                    <small>3 urgentes</small>
+                  </article>
+                </div>
+                <div class="mockup-chart">
+                  <div class="chart-bars">
+                    <span style="height: 45%"></span>
+                    <span style="height: 70%"></span>
+                    <span style="height: 55%"></span>
+                    <span style="height: 82%"></span>
+                    <span style="height: 65%"></span>
+                  </div>
+                  <p>Vue consolidée Paie · RH · Logistique</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="modules" class="modules-section">
+        <div class="section-heading" data-animate>
+          <p class="eyebrow">Modules Orion</p>
+          <h2>Un noyau, trois univers spécialisés.</h2>
+          <p>Chaque module reprend les fondations Orion pour parler le même langage et partager les mêmes données en temps réel.</p>
+        </div>
+        <div class="modules-grid">
+          <article class="module-card" data-animate>
+            <img src="/img/orion-logo-wms.svg" alt="Module Orion WMS" width="72" height="72" />
+            <h3>Orion WMS</h3>
+            <p>Planifie, réceptionne et trace tes stocks avec une précision chirurgicale grâce à un moteur de règles flexible.</p>
+            <ul>
+              <li>Traçabilité logistique</li>
+              <li>Cartographie entrepôt</li>
+              <li>Exécution mobile</li>
+            </ul>
+          </article>
+          <article class="module-card" data-animate>
+            <img src="/img/orion-logo-rh.svg" alt="Module Orion RH" width="72" height="72" />
+            <h3>Orion RH</h3>
+            <p>Unifie dossiers salariés, compétences et parcours pour des décisions RH rapides et documentées.</p>
+            <ul>
+              <li>Fiches collaborateurs</li>
+              <li>Campagnes RH</li>
+              <li>Automatisation des validations</li>
+            </ul>
+          </article>
+          <article class="module-card" data-animate>
+            <img src="/img/orion-logo-paie.svg" alt="Module Orion Paie" width="72" height="72" />
+            <h3>Orion Paie</h3>
+            <p>Industrialise la paie avec des workflows sécurisés, des contrôles intégrés et une diffusion simplifiée.</p>
+            <ul>
+              <li>Simulations multi-sites</li>
+              <li>Campagnes guidées</li>
+              <li>Audit automatique</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="features" class="features-section">
+        <div class="feature" data-animate>
+          <div class="feature-icon">★</div>
+          <div>
+            <h3>Traçabilité logistique</h3>
+            <p>Chaque mouvement WMS est horodaté, versionné et partagé au reste de la constellation Orion.</p>
+          </div>
+        </div>
+        <div class="feature" data-animate>
+          <div class="feature-icon">☰</div>
+          <div>
+            <h3>Paie sécurisée</h3>
+            <p>Des campagnes verrouillées par rôle, avec contrôle automatique des écarts et journaux de validation.</p>
+          </div>
+        </div>
+        <div class="feature" data-animate>
+          <div class="feature-icon">⚙︎</div>
+          <div>
+            <h3>Pilotage RH complet</h3>
+            <p>Suivi des effectifs, talents et campagnes RH avec alertes intelligentes sur les actions critiques.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust-section" data-animate>
+        <div>
+          <p class="eyebrow">Confiance & simplicité</p>
+          <h2>Ton cockpit reste lisible même lorsque tes opérations accélèrent.</h2>
+          <p>
+            Orion ERP combine un shell moderne avec des modules spécialisés, sans multiplier les outils ni les connexions. Les équipes restent alignées et chaque donnée est contextualisée.
+          </p>
+          <div class="trust-highlights">
+            <span>Déploiement rapide</span>
+            <span>Sécurité SOC2-ready</span>
+            <span>APIs ouvertes</span>
+          </div>
+        </div>
+        <div class="trust-visual">
+          <div class="orbit-card">
+            <img src="/img/orion-logo.svg" alt="Logo Orion" />
+            <p>Une orbite unique pour Finance, RH et Logistique.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="contact" class="contact-section" data-animate>
+        <div>
+          <p class="eyebrow">Parlons de ton projet</p>
+          <h2>Demande une démonstration Orion ERP.</h2>
+          <p>Laisse-nous ton email et ton scope, l'équipe Orion te recontacte sous 24h.</p>
+        </div>
+        <form class="contact-form">
+          <label>
+            Email professionnel
+            <input type="email" placeholder="prenom@entreprise.com" required />
+          </label>
+          <label>
+            Module prioritaire
+            <select>
+              <option>Orion WMS</option>
+              <option>Orion RH</option>
+              <option>Orion Paie</option>
+              <option>Suite complète</option>
+            </select>
+          </label>
+          <label>
+            Message
+            <textarea rows="4" placeholder="Parle-nous de tes enjeux."></textarea>
+          </label>
+          <button type="submit" class="btn-primary">Envoyer la demande</button>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <strong>© Orion ERP</strong>
+        <span>Finance · RH · Logistique</span>
+      </div>
+      <a href="/portal/">Portail entreprise</a>
+      <a href="mailto:tech@orion-erp.io">Contact technique</a>
+    </footer>
+
+    <script type="module" src="/js/landing.js"></script>
   </body>
 </html>

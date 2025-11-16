@@ -1,0 +1,17 @@
+<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="orionGradient" x1="20" y1="20" x2="62" y2="62" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563EB" />
+      <stop offset="1" stop-color="#7C3AED" />
+    </linearGradient>
+  </defs>
+  <circle cx="38" cy="38" r="22" stroke="#2563EB" stroke-width="2.2" fill="none" />
+  <path d="M22 48C30.5 60 49 64 62 55" stroke="url(#orionGradient)" stroke-width="2.6" stroke-linecap="round" fill="none" />
+  <path d="M34 32C38 28 44 28 48 33" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" fill="none" />
+  <g transform="translate(52 14)">
+    <rect x="3" y="3" width="8" height="2" fill="#FFFFFF" />
+    <rect x="3" y="3" width="2" height="8" fill="#FFFFFF" />
+    <rect x="5" y="5" width="4" height="4" fill="#FFFFFF" />
+  </g>
+  <circle cx="60" cy="18" r="6" fill="url(#orionGradient)" opacity="0.5" />
+</svg>

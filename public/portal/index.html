@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Portail entreprise · Orion ERP</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body class="portal-body">
+    <main class="portal">
+      <div class="portal-card" data-animate>
+        <div class="portal-logo">
+          <img src="/img/orion-logo.svg" alt="Orion ERP" width="64" height="64" />
+          <div>
+            <span class="logo-orion-main">Orion</span>
+            <span class="logo-orion-sub">ERP</span>
+          </div>
+        </div>
+        <h1>Portail entreprise</h1>
+        <p>Accède à ton shell Orion pour piloter Paie, RH et Logistique.</p>
+        <form id="loginForm" class="portal-form">
+          <label>
+            Identifiant
+            <input type="text" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            Mot de passe
+            <input type="password" name="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit" class="btn-primary">Se connecter</button>
+          <p class="portal-help">
+            <a href="mailto:support@orion-erp.io">Besoin d'aide ?</a>
+          </p>
+          <p class="portal-error" id="loginError" aria-live="assertive"></p>
+        </form>
+      </div>
+    </main>
+    <script type="module" src="/js/portal.js"></script>
+  </body>
+</html>
